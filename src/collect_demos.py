@@ -6,7 +6,6 @@ import json
 import argparse
 from datetime import datetime
 
-import serial
 import pygame
 
 from gst_cam import GstCam
@@ -85,7 +84,7 @@ def read_gamepad_axes(js):
 class EpisodeLoggerDual:
     """
     Each episode:
-      data/<SESSION>/epXXX/
+      <base_dir>/epXXX/
         frames/
         episode.jsonl
 
@@ -139,10 +138,16 @@ class EpisodeLoggerDual:
         front_path = os.path.join(self.frames_dir, front_name)
         side_path  = os.path.join(self.frames_dir, side_name)
 
-        cv2.imwrite(front_path, cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
-                    [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-        cv2.imwrite(side_path,  cv2.cvtColor(frame_side_rgb,  cv2.COLOR_RGB2BGR),
-                    [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+        cv2.imwrite(
+            front_path,
+            cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
+            [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY],
+        )
+        cv2.imwrite(
+            side_path,
+            cv2.cvtColor(frame_side_rgb, cv2.COLOR_RGB2BGR),
+            [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY],
+        )
 
         record = {
             "session": self.session_id,
@@ -173,23 +178,32 @@ class EpisodeLoggerDual:
 
 def main():
     parser = argparse.ArgumentParser()
+
+    # Serial
     parser.add_argument("--port", default="/dev/ttyTHS1")
     parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--front", default="/dev/video0")
-    parser.add_argument("--side",  default="/dev/video1")
 
-    # Restored preview args
+    # Cameras (CSI via nvarguscamerasrc)
+    parser.add_argument("--front-sensor-id", type=int, default=0)
+    parser.add_argument("--side-sensor-id", type=int, default=1)
+    parser.add_argument("--capture-width", type=int, default=640)
+    parser.add_argument("--capture-height", type=int, default=480)
+    parser.add_argument("--capture-fps", type=int, default=30)
+
+    # Preview
     parser.add_argument("--preview", action="store_true",
                         help="Show live preview window (OpenCV GUI).")
     parser.add_argument("--preview-height", type=int, default=540,
-                        help="Preview window height in pixels (only used with --preview).")
+                        help="Preview height in pixels (only with --preview).")
     parser.add_argument("--preview-width", type=int, default=920,
-                        help="Preview window width in pixels (only used with --preview).")
+                        help="Preview width in pixels (only with --preview).")
 
     args = parser.parse_args()
 
     session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir   = os.path.join("../data", session_id)
+
+    # Keep your current relative layout: runners/ -> ../data
+    base_dir = os.path.join("../data", session_id)
     os.makedirs(base_dir, exist_ok=True)
 
     if args.preview:
@@ -202,9 +216,31 @@ def main():
     print("Initializing IMU...")
     imu = MPU6050GyroYaw()
 
-    print("Initializing cameras...")
-    cam_front = GstCam(device=args.front, width=FRAME_SIZE[0], height=FRAME_SIZE[1], fps=30)
-    cam_side  = GstCam(device=args.side,  width=FRAME_SIZE[0], height=FRAME_SIZE[1], fps=30)
+    print("[4/6] Init cameras...")
+    cam_front = GstCam(
+        base_dir=base_dir,
+        frame_size=FRAME_SIZE,
+        jpeg_quality=JPEG_QUALITY,
+        sensor_id=args.front_sensor_id,
+        capture_width=args.capture_width,
+        capture_height=args.capture_height,
+        capture_fps=args.capture_fps,
+    )
+
+    cam_side = GstCam(
+        base_dir=base_dir,
+        frame_size=FRAME_SIZE,
+        jpeg_quality=JPEG_QUALITY,
+        sensor_id=args.side_sensor_id,
+        capture_width=args.capture_width,
+        capture_height=args.capture_height,
+        capture_fps=args.capture_fps,
+    )
+
+    if not cam_front.alive:
+        raise RuntimeError("Front camera failed to start (cam_front.alive == False).")
+    if not cam_side.alive:
+        raise RuntimeError("Side camera failed to start (cam_side.alive == False).")
 
     print("Initializing gamepad...")
     js = init_gamepad()
@@ -244,38 +280,42 @@ def main():
 
             esp.send_cmd(v, w)
 
+            # IMU features (Δyaw from gyro X + accel xyz)
             dyaw_deg = imu.update_and_get_yaw_delta_deg()
             ax_g, ay_g, az_g = imu.read_accel_g()
 
-            frame_front_rgb = cam_front.get_frame_rgb()
-            frame_side_rgb  = cam_side.get_frame_rgb()
+            # Camera frames (already resized to FRAME_SIZE by GstCam)
+            try:
+                frame_front_rgb = cam_front.get_frame_rgb()
+                frame_side_rgb  = cam_side.get_frame_rgb()
+            except Exception as e:
+                print(f"Camera error: {e}")
+                time.sleep(0.05)
+                continue
 
-            if frame_front_rgb is None or frame_side_rgb is None:
-                print("Camera frame missing; skipping.")
-            else:
-                if recording:
-                    logger.log_step(frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w)
+            if recording:
+                logger.log_step(frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w)
 
-                if args.preview:
-                    combined = cv2.hconcat([
-                        cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
-                        cv2.cvtColor(frame_side_rgb,  cv2.COLOR_RGB2BGR),
-                    ])
-
-                    # Resize only for display (does not affect saved images)
-                    disp = cv2.resize(combined, (args.preview_width, args.preview_height))
-
-                    cv2.imshow("Front | Side", disp)
-                    if cv2.waitKey(1) & 0xFF == 27:
-                        break
+            if args.preview:
+                combined = cv2.hconcat([
+                    cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
+                    cv2.cvtColor(frame_side_rgb,  cv2.COLOR_RGB2BGR),
+                ])
+                disp = cv2.resize(combined, (args.preview_width, args.preview_height))
+                cv2.imshow("Front | Side", disp)
+                if cv2.waitKey(1) & 0xFF == 27:
+                    break
 
             dt = time.time() - t0
             time.sleep(max(0.0, DT - dt))
 
     finally:
         logger.close()
-        cam_front.release()
-        cam_side.release()
+        try:
+            cam_front.release()
+            cam_side.release()
+        except Exception:
+            pass
         esp.close()
 
         if args.preview:
