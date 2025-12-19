@@ -2,7 +2,7 @@
 import serial
 
 class ESP32Link:
-    def __init__(self, port="/dev/ttyACM0", baud=115200, timeout=0.01):
+    def __init__(self, port="/dev/ttyTHS1", baud=115200, timeout=0.01):
         self.port = port
         self.baud = baud
         self.timeout = timeout

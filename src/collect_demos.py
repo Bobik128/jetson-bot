@@ -173,7 +173,7 @@ class EpisodeLoggerDual:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", default="/dev/ttyACM0")
+    parser.add_argument("--port", default="/dev/ttyTHS1")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--front", default="/dev/video0")
     parser.add_argument("--side",  default="/dev/video1")
