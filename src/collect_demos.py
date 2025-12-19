@@ -177,11 +177,24 @@ def main():
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--front", default="/dev/video0")
     parser.add_argument("--side",  default="/dev/video1")
+
+    # Restored preview args
+    parser.add_argument("--preview", action="store_true",
+                        help="Show live preview window (OpenCV GUI).")
+    parser.add_argument("--preview-height", type=int, default=540,
+                        help="Preview window height in pixels (only used with --preview).")
+    parser.add_argument("--preview-width", type=int, default=920,
+                        help="Preview window width in pixels (only used with --preview).")
+
     args = parser.parse_args()
 
     session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_dir   = os.path.join("../data", session_id)
     os.makedirs(base_dir, exist_ok=True)
+
+    if args.preview:
+        cv2.namedWindow("Front | Side", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Front | Side", args.preview_width, args.preview_height)
 
     print("Initializing ESP32 serial link...")
     esp = ESP32Link(port=args.port, baud=args.baud)
@@ -243,13 +256,18 @@ def main():
                 if recording:
                     logger.log_step(frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w)
 
-                combined = cv2.hconcat([
-                    cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
-                    cv2.cvtColor(frame_side_rgb,  cv2.COLOR_RGB2BGR),
-                ])
-                cv2.imshow("Front | Side", combined)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    break
+                if args.preview:
+                    combined = cv2.hconcat([
+                        cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR),
+                        cv2.cvtColor(frame_side_rgb,  cv2.COLOR_RGB2BGR),
+                    ])
+
+                    # Resize only for display (does not affect saved images)
+                    disp = cv2.resize(combined, (args.preview_width, args.preview_height))
+
+                    cv2.imshow("Front | Side", disp)
+                    if cv2.waitKey(1) & 0xFF == 27:
+                        break
 
             dt = time.time() - t0
             time.sleep(max(0.0, DT - dt))
@@ -259,10 +277,12 @@ def main():
         cam_front.release()
         cam_side.release()
         esp.close()
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
+
+        if args.preview:
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
