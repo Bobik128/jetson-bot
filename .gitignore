@@ -1,0 +1,4 @@
+data/*
+!data/.gitkeep
+trained_policies/*
+!trained_policies/.gitkeep
