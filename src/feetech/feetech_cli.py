@@ -13,6 +13,14 @@ Tested assumptions / common STS map:
 IMPORTANT:
 - If multiple servos share the same current ID, you must connect/configure one at a time.
 - Some servos require disabling an EEPROM lock before ID changes will persist across power cycles.
+
+example usages
+/usr/bin/python3 feetech_cli.py --port /dev/ttyACM0 scan --start-id 1 --end-id 20
+/usr/bin/python3 feetech_cli.py --port /dev/ttyACM0 set-id --current-id 1 --new-id 2
+/usr/bin/python3 feetech_cli.py --port /dev/ttyACM0 set-bounds --id 2 --min-deg 30 --max-deg 330
+/usr/bin/python3 feetech_cli.py --port /dev/ttyACM0 move --id 2 --deg 120 --readback
+
+
 """
 
 from __future__ import annotations
@@ -150,23 +158,40 @@ def cmd_scan(args) -> int:
 def cmd_set_id(args) -> int:
     ph, pk = open_bus(args.port, args.baudrate, args.protocol_end)
     try:
-        # Disable torque (recommended)
+        # 1) Disable torque (best-effort)
         try:
             write_u8(pk, ph, args.current_id, ADDR_TORQUE_ENABLE, TORQUE_OFF)
         except Exception:
             pass
 
-        # Write new ID
-        write_u8(pk, ph, args.current_id, ADDR_ID, args.new_id)
+        # 2) Best-effort: clear EEPROM lock if your model uses it.
+        # STS series often has an EEPROM "Lock" concept; address varies by model/firmware.
+        # We try common candidates safely; ignore failures.
+        for lock_addr in (55, 47, 37):  # common-ish candidates across Feetech/STS examples; may be NOP on your unit
+            try:
+                write_u8(pk, ph, args.current_id, lock_addr, 0)
+            except Exception:
+                pass
 
-        # Verify by pinging the new ID
-        if not ping(pk, ph, args.new_id):
-            print("Wrote ID, but could not ping new ID. If multiple servos shared the old ID, configure one at a time.")
-            return 2
+        # 3) Write new ID.
+        # Some buses/firmwares do not return a status packet for this write (or it can be missed on marginal wiring),
+        # so don't treat comm errors as fatal here.
+        try:
+            write_u8(pk, ph, args.current_id, ADDR_ID, args.new_id)
+        except RuntimeError as e:
+            print(f"[WARN] ID write did not return a status packet ({e}). Will verify by pinging new ID...")
 
-        print(f"OK: ID changed {args.current_id} -> {args.new_id}")
-        print("Note: some servos require disabling an EEPROM lock for ID changes to persist after power-off.")
-        return 0
+        # 4) Verify by pinging new ID
+        if ping(pk, ph, args.new_id):
+            print(f"OK: ID changed {args.current_id} -> {args.new_id}")
+            print("If this reverts after power-cycle, EEPROM is locked or the change wasn't saved persistently.")
+            return 0
+
+        # If not found, it may still have taken but at a different baud/proto, or write was blocked.
+        print("ERROR: Could not ping new ID after write attempt.")
+        print("Most common causes: EEPROM lock enabled, torque not disabled, or wiring still marginal for replies.")
+        return 2
+
     finally:
         close_bus(ph)
 
