@@ -1,218 +1,270 @@
 #!/usr/bin/env python3
 """
-Feetech (STS3215 / scs_series) control via LeRobot FeetechMotorsBus on Jetson.
+Feetech STS/SCS serial-bus servo control via scservo_sdk (no LeRobot).
 
-Supports:
-  - Set motor ID (requires you can uniquely address the current ID)
-  - Set angle limits (bounds) in degrees
-  - Move to a target position in degrees (servo/position mode)
+Tested assumptions / common STS map:
+- ID register address = 5
+- Goal position write block starts at 0x2A:
+    [pos_L, pos_H, time_L, time_H, speed_L, speed_H]
+- Present position read at 0x38 (2 bytes, low then high)
+- Min angle limit at address 9, Max angle limit at address 11 (often 2 bytes each)
+- protocol_end = 0 for STS/SMS, protocol_end = 1 for SCS (common convention)
 
-Notes:
-  - Use one motor at a time when changing IDs if multiple motors share the same ID.
-  - Default bus baudrate used by LeRobot is typically 1_000_000.
+IMPORTANT:
+- If multiple servos share the same current ID, you must connect/configure one at a time.
+- Some servos require disabling an EEPROM lock before ID changes will persist across power cycles.
 """
 
 from __future__ import annotations
-
 import argparse
 import sys
-from dataclasses import dataclass
+from typing import List, Tuple
 
-from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
-from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus, TorqueMode
+from scservo_sdk import PortHandler, PacketHandler  # provided by feetech-servo-sdk / ftservo-python-sdk
+
+# ----------------------------
+# Control table addresses
+# ----------------------------
+ADDR_ID                 = 5
+
+ADDR_MIN_ANGLE_LIMIT    = 9     # from Feetech tutorial doc
+ADDR_MAX_ANGLE_LIMIT    = 11    # from Feetech tutorial doc
+
+ADDR_GOAL_POS_BLOCK     = 0x2A  # from protocol manual example
+LEN_GOAL_POS_BLOCK      = 6     # pos(2) + time(2) + speed(2)
+
+ADDR_PRESENT_POSITION   = 0x38  # from protocol manual example (2 bytes, low then high)
+LEN_PRESENT_POSITION    = 2
+
+# Some commonly-used runtime registers (seen in many STS examples)
+ADDR_TORQUE_ENABLE      = 40    # often used for STS/SCS series
+TORQUE_ON               = 1
+TORQUE_OFF              = 0
 
 
-# --- Helpers ---
-def degrees_to_raw_steps(deg: float, resolution: int = 4096) -> int:
+# ----------------------------
+# Helpers
+# ----------------------------
+def lo(x: int) -> int:
+    return x & 0xFF
+
+def hi(x: int) -> int:
+    return (x >> 8) & 0xFF
+
+def clamp(v: int, vmin: int, vmax: int) -> int:
+    return max(vmin, min(vmax, v))
+
+def deg_to_sts_units(deg: float) -> int:
     """
-    Convert degrees in [-180, +180] (nominal) to Feetech raw step offset around center.
-    LeRobot uses a centered degree convention for calibration, but for raw limits we keep it simple:
-      center = resolution/2
-      steps_per_deg = resolution/360
-      raw = center + deg * steps_per_deg
-    Then clamp to [0, resolution-1].
+    STS “360° / 4096 steps” convention is common for ST3215/STS3215-class devices.
+    0..4095 corresponds to 0..360 degrees, with 2048 near mid.
     """
-    center = resolution // 2
-    raw = int(round(center + deg * (resolution / 360.0)))
-    return max(0, min(resolution - 1, raw))
+    # Map degrees to [0, 4095]
+    units = int(round((deg % 360.0) * (4096.0 / 360.0)))
+    return clamp(units, 0, 4095)
 
+def open_bus(port: str, baudrate: int, protocol_end: int) -> Tuple[PortHandler, PacketHandler]:
+    port_handler = PortHandler(port)
+    packet_handler = PacketHandler(protocol_end)
 
-def build_single_motor_bus(port: str, motor_id: int, model: str, name: str = "m") -> FeetechMotorsBus:
-    cfg = FeetechMotorsBusConfig(
-        port=port,
-        motors={name: (motor_id, model)},
-        mock=False,
-    )
-    return FeetechMotorsBus(cfg)
+    if not port_handler.openPort():
+        raise RuntimeError(f"Failed to open port: {port}")
 
+    if not port_handler.setBaudRate(baudrate):
+        raise RuntimeError(f"Failed to set baudrate {baudrate} on {port}")
 
-@dataclass(frozen=True)
-class BusParams:
-    port: str
-    baudrate: int
-    model: str
-    motor_name: str
+    return port_handler, packet_handler
 
-
-def connect_bus(bus: FeetechMotorsBus, baudrate: int) -> None:
-    bus.connect()
-    # LeRobot exposes a bus-level baudrate setter.
-    bus.set_bus_baudrate(baudrate)
-
-
-# --- Commands ---
-def cmd_set_id(args: argparse.Namespace, bp: BusParams) -> int:
-    bus = build_single_motor_bus(bp.port, args.current_id, bp.model, bp.motor_name)
-    connect_bus(bus, bp.baudrate)
-
+def close_bus(port_handler: PortHandler) -> None:
     try:
-        # Verify we can talk to the motor we think we are addressing
-        present_id = int(bus.read("ID")[0])
-        if present_id != args.current_id:
-            print(f"[WARN] Read back ID={present_id}, expected {args.current_id}. Continuing anyway.")
+        port_handler.closePort()
+    except Exception:
+        pass
 
-        # Recommended: disable torque before changing persistent config
-        bus.write("Torque_Enable", TorqueMode.DISABLED.value)
+def ping(packet: PacketHandler, port: PortHandler, motor_id: int) -> bool:
+    model_number, comm_result, error = packet.ping(port, motor_id)
+    return comm_result == 0 and error == 0
 
-        # Write new ID
-        bus.write("ID", int(args.new_id))
+def read_u16(packet: PacketHandler, port: PortHandler, motor_id: int, addr: int) -> int:
+    val, comm_result, error = packet.read2ByteTxRx(port, motor_id, addr)
+    if comm_result != 0 or error != 0:
+        raise RuntimeError(f"read_u16 failed: id={motor_id} addr=0x{addr:02X} comm={comm_result} err={error}")
+    return int(val)
 
-        # Read back (still addressed via old mapping in this bus object; reconnect with new ID)
-        bus.disconnect()
+def write_u8(packet: PacketHandler, port: PortHandler, motor_id: int, addr: int, value: int) -> None:
+    comm_result, error = packet.write1ByteTxRx(port, motor_id, addr, int(value) & 0xFF)
+    if comm_result != 0 or error != 0:
+        raise RuntimeError(f"write_u8 failed: id={motor_id} addr=0x{addr:02X} comm={comm_result} err={error}")
 
-        verify_bus = build_single_motor_bus(bp.port, args.new_id, bp.model, bp.motor_name)
-        connect_bus(verify_bus, bp.baudrate)
-        verified_id = int(verify_bus.read("ID")[0])
-        verify_bus.disconnect()
+def write_u16(packet: PacketHandler, port: PortHandler, motor_id: int, addr: int, value: int) -> None:
+    comm_result, error = packet.write2ByteTxRx(port, motor_id, addr, int(value) & 0xFFFF)
+    if comm_result != 0 or error != 0:
+        raise RuntimeError(f"write_u16 failed: id={motor_id} addr=0x{addr:02X} comm={comm_result} err={error}")
 
-        if verified_id != args.new_id:
-            print(f"[ERROR] Failed to set ID. Read back {verified_id}, expected {args.new_id}.")
-            return 2
+def write_goal_pos_block(packet: PacketHandler, port: PortHandler, motor_id: int,
+                         pos: int, time_ms: int, speed: int) -> None:
+    """
+    Write 6 bytes to 0x2A: position (u16), time (u16), speed (u16)
+    Based on Feetech protocol manual example.
+    """
+    # SDK provides writeTxRx for arbitrary blocks as writeNByteTxRx in some variants;
+    # if unavailable, you can fall back to sequential writes.
+    data = [lo(pos), hi(pos), lo(time_ms), hi(time_ms), lo(speed), hi(speed)]
 
-        print(f"[OK] Motor ID changed: {args.current_id} -> {args.new_id}")
-        return 0
+    # Try to use writeNByteTxRx if present; else do sequential writes.
+    if hasattr(packet, "writeTxRx"):
+        # Some forks expose writeTxRx(port, id, addr, length, data)
+        comm_result, error = packet.writeTxRx(port, motor_id, ADDR_GOAL_POS_BLOCK, LEN_GOAL_POS_BLOCK, data)
+        if comm_result != 0 or error != 0:
+            raise RuntimeError(f"write_goal_pos_block failed: comm={comm_result} err={error}")
+    elif hasattr(packet, "writeNByteTxRx"):
+        comm_result, error = packet.writeNByteTxRx(port, motor_id, ADDR_GOAL_POS_BLOCK, LEN_GOAL_POS_BLOCK, data)
+        if comm_result != 0 or error != 0:
+            raise RuntimeError(f"write_goal_pos_block failed: comm={comm_result} err={error}")
+    else:
+        # Fallback: write as three u16 values
+        write_u16(packet, port, motor_id, ADDR_GOAL_POS_BLOCK + 0, pos)
+        write_u16(packet, port, motor_id, ADDR_GOAL_POS_BLOCK + 2, time_ms)
+        write_u16(packet, port, motor_id, ADDR_GOAL_POS_BLOCK + 4, speed)
 
+
+# ----------------------------
+# Commands
+# ----------------------------
+def cmd_scan(args) -> int:
+    port, baud, proto = args.port, args.baudrate, args.protocol_end
+    ph, pk = open_bus(port, baud, proto)
+    try:
+        found = []
+        for mid in range(args.start_id, args.end_id + 1):
+            if ping(pk, ph, mid):
+                found.append(mid)
+        if found:
+            print("Found servos:", found)
+            return 0
+        print("No servos found in range.")
+        return 1
     finally:
+        close_bus(ph)
+
+def cmd_set_id(args) -> int:
+    ph, pk = open_bus(args.port, args.baudrate, args.protocol_end)
+    try:
+        # Disable torque (recommended)
         try:
-            if getattr(bus, "is_connected", False):
-                bus.disconnect()
+            write_u8(pk, ph, args.current_id, ADDR_TORQUE_ENABLE, TORQUE_OFF)
         except Exception:
             pass
 
+        # Write new ID
+        write_u8(pk, ph, args.current_id, ADDR_ID, args.new_id)
 
-def cmd_set_bounds(args: argparse.Namespace, bp: BusParams) -> int:
-    bus = build_single_motor_bus(bp.port, args.id, bp.model, bp.motor_name)
-    connect_bus(bus, bp.baudrate)
-
-    try:
-        # For sts3215, LeRobot declares resolution 4096 in its table.
-        resolution = 4096
-
-        min_raw = degrees_to_raw_steps(args.min_deg, resolution)
-        max_raw = degrees_to_raw_steps(args.max_deg, resolution)
-
-        if min_raw >= max_raw:
-            print(f"[ERROR] Computed min_raw={min_raw} >= max_raw={max_raw}. Check your degree inputs.")
+        # Verify by pinging the new ID
+        if not ping(pk, ph, args.new_id):
+            print("Wrote ID, but could not ping new ID. If multiple servos shared the old ID, configure one at a time.")
             return 2
 
-        # Disable torque for config
-        bus.write("Torque_Enable", TorqueMode.DISABLED.value)
+        print(f"OK: ID changed {args.current_id} -> {args.new_id}")
+        print("Note: some servos require disabling an EEPROM lock for ID changes to persist after power-off.")
+        return 0
+    finally:
+        close_bus(ph)
 
-        # Ensure position/servo mode (commonly Mode=0 in STS/SCS series tables)
-        bus.write("Mode", 0)
+def cmd_set_bounds(args) -> int:
+    ph, pk = open_bus(args.port, args.baudrate, args.protocol_end)
+    try:
+        # Bounds are often stored as u16 units (0..4095) for STS/ST class devices.
+        min_u = deg_to_sts_units(args.min_deg)
+        max_u = deg_to_sts_units(args.max_deg)
 
-        # Apply angle limits
-        bus.write("Min_Angle_Limit", min_raw)
-        bus.write("Max_Angle_Limit", max_raw)
+        # Disable torque (recommended)
+        try:
+            write_u8(pk, ph, args.id, ADDR_TORQUE_ENABLE, TORQUE_OFF)
+        except Exception:
+            pass
+
+        # Write limits
+        write_u16(pk, ph, args.id, ADDR_MIN_ANGLE_LIMIT, min_u)
+        write_u16(pk, ph, args.id, ADDR_MAX_ANGLE_LIMIT, max_u)
 
         # Re-enable torque
-        bus.write("Torque_Enable", TorqueMode.ENABLED.value)
+        try:
+            write_u8(pk, ph, args.id, ADDR_TORQUE_ENABLE, TORQUE_ON)
+        except Exception:
+            pass
 
-        # Read back for confirmation
-        rb_min = int(bus.read("Min_Angle_Limit")[0])
-        rb_max = int(bus.read("Max_Angle_Limit")[0])
-
-        print(f"[OK] Bounds set for ID={args.id}:")
-        print(f"     min_deg={args.min_deg} -> Min_Angle_Limit={rb_min}")
-        print(f"     max_deg={args.max_deg} -> Max_Angle_Limit={rb_max}")
+        # Readback (optional)
+        rb_min = read_u16(pk, ph, args.id, ADDR_MIN_ANGLE_LIMIT)
+        rb_max = read_u16(pk, ph, args.id, ADDR_MAX_ANGLE_LIMIT)
+        print(f"OK: bounds set for ID={args.id}: min={rb_min} max={rb_max} (units 0..4095)")
         return 0
-
     finally:
-        bus.disconnect()
+        close_bus(ph)
 
-
-def cmd_move(args: argparse.Namespace, bp: BusParams) -> int:
-    bus = build_single_motor_bus(bp.port, args.id, bp.model, bp.motor_name)
-    connect_bus(bus, bp.baudrate)
-
+def cmd_move(args) -> int:
+    ph, pk = open_bus(args.port, args.baudrate, args.protocol_end)
     try:
-        resolution = 4096
+        pos_u = deg_to_sts_units(args.deg)
 
-        # Put motor in position/servo mode and enable torque
-        bus.write("Mode", 0)
-        bus.write("Torque_Enable", TorqueMode.ENABLED.value)
+        # Enable torque
+        try:
+            write_u8(pk, ph, args.id, ADDR_TORQUE_ENABLE, TORQUE_ON)
+        except Exception:
+            pass
 
-        # Optional motion shaping
-        if args.goal_speed is not None:
-            bus.write("Goal_Speed", int(args.goal_speed))
-        if args.acceleration is not None:
-            bus.write("Acceleration", int(args.acceleration))
-
-        target_raw = degrees_to_raw_steps(args.deg, resolution)
-        bus.write("Goal_Position", target_raw)
+        # Write goal position block (pos/time/speed) at 0x2A
+        # time_ms and speed are protocol-level fields; 0 is commonly accepted for "use internal default"
+        write_goal_pos_block(pk, ph, args.id, pos_u, args.time_ms, args.speed)
 
         if args.readback:
-            pos = int(bus.read("Present_Position")[0])
-            print(f"[OK] Commanded deg={args.deg} (raw={target_raw}), present raw={pos}")
+            present = read_u16(pk, ph, args.id, ADDR_PRESENT_POSITION)
+            print(f"Commanded: deg={args.deg} -> pos={pos_u}; Present_Position={present}")
+        else:
+            print(f"Commanded: deg={args.deg} -> pos={pos_u}")
 
         return 0
-
     finally:
-        bus.disconnect()
+        close_bus(ph)
 
-
-def main() -> int:
-    p = argparse.ArgumentParser(description="Feetech on Jetson via LeRobot FeetechMotorsBus")
-    p.add_argument("--port", default="/dev/ttyACM0", help="Serial adapter path (default: /dev/ttyACM0)")
-    p.add_argument("--baudrate", type=int, default=1_000_000, help="Bus baudrate (default: 1000000)")
-    p.add_argument("--model", default="sts3215", help="Motor model key used by LeRobot (default: sts3215)")
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Feetech STS/SCS servo CLI using scservo_sdk (no LeRobot)")
+    p.add_argument("--port", default="/dev/ttyACM0")
+    p.add_argument("--baudrate", type=int, default=1_000_000)
+    p.add_argument("--protocol-end", type=int, default=0,
+                   help="0 for STS/SMS, 1 for SCS (common convention). Default 0.")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s_id = sub.add_parser("set-id", help="Change a motor ID (requires you can uniquely address current ID)")
-    s_id.add_argument("--current-id", type=int, required=True)
-    s_id.add_argument("--new-id", type=int, required=True)
+    scan = sub.add_parser("scan", help="Ping a range of IDs")
+    scan.add_argument("--start-id", type=int, default=1)
+    scan.add_argument("--end-id", type=int, default=20)
+    scan.set_defaults(func=cmd_scan)
 
-    s_bounds = sub.add_parser("set-bounds", help="Set Min/Max angle limits (degrees) for a motor")
-    s_bounds.add_argument("--id", type=int, required=True)
-    s_bounds.add_argument("--min-deg", type=float, required=True)
-    s_bounds.add_argument("--max-deg", type=float, required=True)
+    sid = sub.add_parser("set-id", help="Change a servo ID")
+    sid.add_argument("--current-id", type=int, required=True)
+    sid.add_argument("--new-id", type=int, required=True)
+    sid.set_defaults(func=cmd_set_id)
 
-    s_move = sub.add_parser("move", help="Move motor to a target in degrees (servo/position mode)")
-    s_move.add_argument("--id", type=int, required=True)
-    s_move.add_argument("--deg", type=float, required=True)
-    s_move.add_argument("--goal-speed", type=int, default=None, help="Optional Goal_Speed register value")
-    s_move.add_argument("--acceleration", type=int, default=None, help="Optional Acceleration register value")
-    s_move.add_argument("--readback", action="store_true", help="Read Present_Position after command")
+    bnd = sub.add_parser("set-bounds", help="Set min/max angle limits (degrees) (stored as 0..4095 units)")
+    bnd.add_argument("--id", type=int, required=True)
+    bnd.add_argument("--min-deg", type=float, required=True)
+    bnd.add_argument("--max-deg", type=float, required=True)
+    bnd.set_defaults(func=cmd_set_bounds)
 
+    mv = sub.add_parser("move", help="Move to an absolute angle (degrees)")
+    mv.add_argument("--id", type=int, required=True)
+    mv.add_argument("--deg", type=float, required=True)
+    mv.add_argument("--time-ms", type=int, default=0, help="Move time field in the 0x2A block (u16). Default 0.")
+    mv.add_argument("--speed", type=int, default=1000, help="Speed field in the 0x2A block (u16). Default 1000.")
+    mv.add_argument("--readback", action="store_true")
+    mv.set_defaults(func=cmd_move)
+
+    return p
+
+def main() -> int:
+    p = build_parser()
     args = p.parse_args()
-
-    bp = BusParams(
-        port=args.port,
-        baudrate=args.baudrate,
-        model=args.model,
-        motor_name="m",
-    )
-
-    if args.cmd == "set-id":
-        return cmd_set_id(args, bp)
-    if args.cmd == "set-bounds":
-        return cmd_set_bounds(args, bp)
-    if args.cmd == "move":
-        return cmd_move(args, bp)
-
-    return 2
-
+    return args.func(args)
 
 if __name__ == "__main__":
     raise SystemExit(main())
