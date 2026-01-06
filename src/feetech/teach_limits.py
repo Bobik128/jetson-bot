@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 """
-Real-time limits teaching for Feetech STS3215 using read-only sampling (no servo writes).
+Real-time limits teaching for Feetech STS3215 using read-only sampling (no servo limit writes).
 
-Key properties:
-- Samples at high rate (default 40 Hz) by reading Present_Position only.
+- Samples at high rate (default 40 Hz): READS Present_Position only.
 - Expands allowed ranges:
-    - global per joint
-    - conditional per joint based on binned angles of higher-priority joints
-- Stores sample_count per conditional key for confidence.
-- Periodically autosaves to JSON (atomic write).
-- Optional noise filtering: require angle change > deadband to update (default small).
+    - global per servo
+    - conditional per servo based on binned angles of higher-priority servos
+- Stores sample counts per conditional key.
+- Supports global-only IDs (e.g., gripper) that are NOT conditioned on other joints.
+- Periodically autosaves to JSON via atomic write.
 
-Usage example:
+Recommended usage:
   python3 teach_limits_realtime.py --port /dev/ttyACM0 --baudrate 1000000 \
-      --ids 2 3 4 6 --priority 2 3 4 6 --bin-deg 5 \
-      --hz 40 --out limits.json --autosave-s 5
+      --ids 2 3 4 6 --priority 2 3 4 6 \
+      --global-only-ids 6 \
+      --bin-deg 5 --hz 40 --deadband-deg 0.25 \
+      --autosave-s 5 --out limits.json --torque-off
 
-Controls (interactive):
-  p  print current angles
-  s  force save now
-  q  quit (saves)
-  stats  show database size and sample counts
-  torque on|off (optional; OFF lets you move by hand)
+Interactive commands:
+  p                 print last angles
+  s                 save now
+  stats             show db size
+  torque on|off     (optional)
+  q                 quit (saves)
 """
 
 from __future__ import annotations
@@ -33,12 +34,12 @@ import sys
 import time
 import threading
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set
 
 from scservo_sdk import PortHandler, PacketHandler
 
 # ----------------------------
-# STS3215 control table
+# STS3215 control table (common)
 # ----------------------------
 ADDR_TORQUE_ENABLE = 40
 TORQUE_ON = 1
@@ -56,9 +57,6 @@ def raw_to_deg(raw: int) -> float:
 
 def bin_angle(deg: float, bin_deg: float) -> int:
     return int(round(deg / bin_deg))
-
-def clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
 
 
 # ----------------------------
@@ -80,7 +78,7 @@ def close_bus(ph: PortHandler):
         pass
 
 def write_u8(pk: PacketHandler, ph: PortHandler, motor_id: int, addr: int, value: int):
-    # best-effort write; we do not fail hard here
+    # best-effort write; not used for limits; only torque toggling
     pk.write1ByteTxRx(ph, motor_id, addr, int(value) & 0xFF)
 
 def read_u16(pk: PacketHandler, ph: PortHandler, motor_id: int, addr: int) -> int:
@@ -113,8 +111,11 @@ class LimitsDB:
     # conditional_limits[id][key] = {min_deg,max_deg,count}
     conditional_limits: Dict[str, Dict[str, Dict[str, float]]]
 
-    # optional forbidden pockets (still supported, not required)
+    # forbidden binned full states (optional)
     forbidden: List[Dict[str, int]]
+
+    # global-only ids (e.g., gripper)
+    global_only_ids: List[int]
 
     notes: str = ""
 
@@ -126,9 +127,10 @@ class LimitsDB:
         os.replace(tmp, path)
 
     @staticmethod
-    def new(port: str, baudrate: int, ids: List[int], priority: List[int], bin_deg: float, notes: str) -> "LimitsDB":
+    def new(port: str, baudrate: int, ids: List[int], priority: List[int], bin_deg: float,
+            global_only_ids: List[int], notes: str) -> "LimitsDB":
         return LimitsDB(
-            version=2,
+            version=3,
             port=port,
             baudrate=baudrate,
             ids=ids,
@@ -137,6 +139,7 @@ class LimitsDB:
             global_limits={str(mid): {"min_deg": 9999.0, "max_deg": -9999.0} for mid in ids},
             conditional_limits={str(mid): {} for mid in ids},
             forbidden=[],
+            global_only_ids=global_only_ids,
             notes=notes or "",
         )
 
@@ -144,11 +147,14 @@ class LimitsDB:
     def load(path: str) -> "LimitsDB":
         with open(path, "r", encoding="utf-8") as f:
             d = json.load(f)
-        # backward compatibility: ensure "count" exists
+
+        # back-compat: ensure count exists
         for sid, mp in d.get("conditional_limits", {}).items():
-            for k, rec in mp.items():
+            for _k, rec in mp.items():
                 rec.setdefault("count", 0)
+
         d.setdefault("forbidden", [])
+        d.setdefault("global_only_ids", [])
         return LimitsDB(**d)
 
 
@@ -184,6 +190,7 @@ class Sampler:
         self.ph = ph
         self.db = db
         self.out_path = out_path
+
         self.hz = hz
         self.autosave_s = autosave_s
         self.deadband_deg = deadband_deg
@@ -192,13 +199,13 @@ class Sampler:
         self.ids = db.ids
         self.priority = db.priority
         self.bin_deg = db.bin_deg
+        self.global_only: Set[int] = set(db.global_only_ids)
 
         self.stop = False
         self.last_angles: Optional[Dict[int, float]] = None
         self.last_autosave = 0.0
         self.last_print = 0.0
 
-        # recommended: torque OFF for manual teaching
         if torque_off:
             set_torque(self.pk, self.ph, self.ids, on=False)
 
@@ -219,8 +226,13 @@ class Sampler:
     def stats(self) -> Dict[str, int]:
         with self._lock:
             keys_total = sum(len(self.db.conditional_limits[str(mid)]) for mid in self.ids)
+            counts_total = 0
+            for mid in self.ids:
+                for k, rec in self.db.conditional_limits[str(mid)].items():
+                    counts_total += int(rec.get("count", 0))
             return {
                 "keys_total": keys_total,
+                "counts_total": counts_total,
                 "forbidden": len(self.db.forbidden),
             }
 
@@ -234,22 +246,26 @@ class Sampler:
     def _update_db(self, angles: Dict[int, float]):
         # deadband to reduce noise updates
         if self.last_angles is not None and self.deadband_deg > 0:
-            # if nothing moved, skip update
             moved = any(abs(angles[mid] - self.last_angles[mid]) >= self.deadband_deg for mid in self.priority)
             if not moved:
                 return
 
-        # Global
+        # Global always updates
         for mid in self.ids:
             deg = angles[mid]
             g = self.db.global_limits[str(mid)]
             g["min_deg"] = min(g["min_deg"], deg)
             g["max_deg"] = max(g["max_deg"], deg)
 
-        # Conditional (per target servo)
+        # Conditional updates (unless global-only)
         for mid in self.ids:
             deg = angles[mid]
-            k = key_for_target(self.priority, mid, angles, self.bin_deg)
+
+            if mid in self.global_only:
+                k = "ROOT"  # gripper etc. depends on nothing
+            else:
+                k = key_for_target(self.priority, mid, angles, self.bin_deg)
+
             mp = self.db.conditional_limits[str(mid)]
             if k not in mp:
                 mp[k] = {"min_deg": 9999.0, "max_deg": -9999.0, "count": 0}
@@ -267,7 +283,6 @@ class Sampler:
             try:
                 angles = self._snapshot_angles()
             except Exception:
-                # if a read fails, skip this cycle
                 time.sleep(period)
                 continue
 
@@ -281,13 +296,13 @@ class Sampler:
                     self.last_autosave = now
 
                 if self.print_hz > 0 and (now - self.last_print) >= (1.0 / self.print_hz):
-                    # lightweight status line
                     keys_total = sum(len(self.db.conditional_limits[str(mid)]) for mid in self.ids)
-                    sys.stdout.write(
-                        f"\r[hz={self.hz:.1f}] keys={keys_total}  "
+                    line = (
+                        f"\r[teach {self.hz:.1f}Hz] keys={keys_total}  "
                         + "  ".join([f"{mid}:{angles[mid]:6.1f}°" for mid in self.priority])
                         + " " * 10
                     )
+                    sys.stdout.write(line)
                     sys.stdout.flush()
                     self.last_print = now
 
@@ -295,37 +310,41 @@ class Sampler:
             time.sleep(max(0.0, period - dt))
 
 
-# ----------------------------
-# Main
-# ----------------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--baudrate", type=int, default=1_000_000)
+
     ap.add_argument("--ids", type=int, nargs="+", required=True)
     ap.add_argument("--priority", type=int, nargs="+", default=None,
                     help="Must contain exactly same IDs as --ids. Earlier = higher priority.")
+    ap.add_argument("--global-only-ids", type=int, nargs="*", default=[],
+                    help="IDs that should only learn global limits (e.g., gripper). Example: --global-only-ids 6")
+
     ap.add_argument("--bin-deg", type=float, default=5.0)
+    ap.add_argument("--hz", type=float, default=40.0)
+    ap.add_argument("--deadband-deg", type=float, default=0.25)
+    ap.add_argument("--autosave-s", type=float, default=5.0)
+    ap.add_argument("--print-hz", type=float, default=5.0)
 
-    ap.add_argument("--hz", type=float, default=40.0, help="Sampling rate (read-only).")
-    ap.add_argument("--deadband-deg", type=float, default=0.25, help="Skip DB updates if nothing moved >= this.")
-    ap.add_argument("--autosave-s", type=float, default=5.0, help="Autosave interval (seconds).")
-    ap.add_argument("--print-hz", type=float, default=5.0, help="Print status line rate; 0 disables.")
-
-    ap.add_argument("--out", required=True, help="JSON limits output path (atomic overwrite).")
-    ap.add_argument("--load", default=None, help="Load existing limits JSON and keep expanding it.")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--load", default=None)
     ap.add_argument("--notes", default="")
-
-    ap.add_argument("--torque-off", action="store_true",
-                    help="Disable torque at start to allow hand-moving (recommended for teaching).")
+    ap.add_argument("--torque-off", action="store_true", help="Disable torque at start for hand movement.")
 
     args = ap.parse_args()
 
     ids = args.ids
     priority = args.priority if args.priority else sorted(ids)
     if set(priority) != set(ids) or len(priority) != len(ids):
-        print("[ERROR] --priority must contain exactly the same IDs as --ids (same elements, no duplicates).")
+        print("[ERROR] --priority must contain exactly the same IDs as --ids.")
         return 2
+
+    # Validate global-only IDs exist
+    for gid in args.global_only_ids:
+        if gid not in ids:
+            print(f"[ERROR] global-only id {gid} is not in --ids.")
+            return 2
 
     ph, pk = open_bus(args.port, args.baudrate, protocol_end=0)
 
@@ -338,11 +357,20 @@ def main():
             db.ids = ids
             db.priority = priority
             db.bin_deg = args.bin_deg
+            db.global_only_ids = list(sorted(set(args.global_only_ids)))
             if args.notes:
                 db.notes = args.notes
-            print(f"[OK] Loaded existing DB: {args.load}")
+            print(f"[OK] Loaded DB: {args.load}")
         else:
-            db = LimitsDB.new(args.port, args.baudrate, ids, priority, args.bin_deg, args.notes)
+            db = LimitsDB.new(
+                port=args.port,
+                baudrate=args.baudrate,
+                ids=ids,
+                priority=priority,
+                bin_deg=args.bin_deg,
+                global_only_ids=list(sorted(set(args.global_only_ids))),
+                notes=args.notes,
+            )
 
         sampler = Sampler(
             pk=pk,
@@ -357,11 +385,11 @@ def main():
         )
         sampler.start()
 
-        print("\nReal-time teaching started (read-only).")
-        print("Commands: p (print) | s (save now) | stats | torque on/off | q (quit)\n")
+        print("\n\nReal-time teaching started (read-only).")
+        print("Commands: p | s | stats | torque on/off | q\n")
 
         while True:
-            cmd = input("\n> ").strip().lower()
+            cmd = input("> ").strip().lower()
 
             if cmd in ("q", "quit", "exit"):
                 sampler.stop = True
@@ -384,7 +412,7 @@ def main():
 
             if cmd == "stats":
                 st = sampler.stats()
-                print(f"keys_total={st['keys_total']} forbidden={st['forbidden']}")
+                print(f"keys_total={st['keys_total']} counts_total={st['counts_total']} forbidden={st['forbidden']}")
                 continue
 
             if cmd.startswith("torque "):
