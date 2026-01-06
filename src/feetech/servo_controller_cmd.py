@@ -1,45 +1,28 @@
 #!/usr/bin/env python3
 """
-Feetech STS3215 Runtime Controller (CMD/REPL) with hierarchical limits from limits.json.
+Runtime controller CLI for Feetech STS3215 using limits.json from teach_limits_realtime.py.
 
-Features:
-- Load LimitsDB JSON produced by teach_limits.py
-- Interactive command-line control (REPL)
-- Priority enforcement:
-    - Higher-priority servos keep requested angles
-    - Lower-priority servos are auto-clamped to conditional/global limits based on higher ones
-- Forbidden-state avoidance:
-    - If a pose matches a forbidden binned combination, adjust lowest-priority servos toward neutral until safe
-- Safe motion:
-    - Moves servos in priority order
-    - Optional wait-to-target
-
-Requirements:
-- scservo_sdk available in your Python env
-- Your physical bus is already working
+- Priority enforcement: higher-priority servos keep their target; lower-priority are clamped.
+- Conditional limits: used for non-global-only servos based on higher servos' binned angles.
+- Global-only IDs: clamp only using global min/max (e.g., gripper servo 6).
 
 Usage:
-  python3 servo_controller_cmd.py --port /dev/ttyACM0 --baudrate 1000000 --limits ./limits.json
+  python3 servo_controller_cmd.py --port /dev/ttyACM0 --baudrate 1000000 --limits limits.json --global-only-ids 6
 
-REPL commands:
+Commands:
   help
   ids
-  read                    (read current angles)
-  show                    (show desired + final clamped pose)
-  set <id> <deg>          (set target angle for one servo and move immediately)
-  setmulti <id=deg ...>   (set multiple targets at once and move)
-  move                    (apply current desired targets)
-  neutral                 (set all servos to their neutral/midpoints and move)
+  read
+  show
+  set <id> <deg>
+  setmulti <id=deg ...>
+  move
+  neutral
   torque on|off
-  speed <u16>             (set move speed)
-  edgespeed <u16>         (set speed used for forbidden-resolution micro-steps)
-  wait on|off             (toggle waiting for each move)
-  q / quit
-
-Notes:
-- Angles are interpreted in the same 0..360 domain your teaching used.
-- If your learned ranges cross 0° wrap-around, you should re-teach in a consistent region
-  or we can extend the model to handle circular intervals.
+  speed <u16>
+  wait on|off
+  clear
+  q
 """
 
 from __future__ import annotations
@@ -47,7 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 from scservo_sdk import PortHandler, PacketHandler
 
@@ -63,7 +46,7 @@ ADDR_PRESENT_POSITION = 0x38  # 2 bytes
 
 
 # ----------------------------
-# Conversion
+# Conversion helpers
 # ----------------------------
 def raw_to_deg(raw: int) -> float:
     return (int(raw) % 4096) * (360.0 / 4096.0)
@@ -72,11 +55,8 @@ def deg_to_raw(deg: float) -> int:
     deg = deg % 360.0
     return int(round(deg * (4096.0 / 360.0))) & 0xFFFF
 
-def lo(x: int) -> int:
-    return x & 0xFF
-
-def hi(x: int) -> int:
-    return (x >> 8) & 0xFF
+def lo(x: int) -> int: return x & 0xFF
+def hi(x: int) -> int: return (x >> 8) & 0xFF
 
 def midpoint(a: float, b: float) -> float:
     return (a + b) / 2.0
@@ -85,8 +65,10 @@ def clamp(v: float, vmin: float, vmax: float) -> float:
     return max(vmin, min(vmax, v))
 
 def circular_diff_deg(a: float, b: float) -> float:
-    # shortest circular distance
     return abs(((a - b + 180.0) % 360.0) - 180.0)
+
+def bin_angle(deg: float, bin_deg: float) -> int:
+    return int(round(deg / bin_deg))
 
 
 # ----------------------------
@@ -128,7 +110,6 @@ def write_goal_pos_block(pk: PacketHandler, ph: PortHandler, motor_id: int, pos_
     elif hasattr(pk, "writeNByteTxRx"):
         pk.writeNByteTxRx(ph, motor_id, ADDR_GOAL_POS_BLOCK, 6, data)
     else:
-        # fallback: sequential
         pk.write2ByteTxRx(ph, motor_id, ADDR_GOAL_POS_BLOCK + 0, pos_raw)
         pk.write2ByteTxRx(ph, motor_id, ADDR_GOAL_POS_BLOCK + 2, time_ms)
         pk.write2ByteTxRx(ph, motor_id, ADDR_GOAL_POS_BLOCK + 4, speed)
@@ -137,13 +118,9 @@ def move_deg(pk: PacketHandler, ph: PortHandler, mid: int, deg: float, speed: in
     write_goal_pos_block(pk, ph, mid, deg_to_raw(deg), time_ms, speed)
 
 def read_angles(pk: PacketHandler, ph: PortHandler, ids: List[int]) -> Dict[int, float]:
-    out: Dict[int, float] = {}
-    for mid in ids:
-        out[mid] = raw_to_deg(read_u16(pk, ph, mid, ADDR_PRESENT_POSITION))
-    return out
+    return {mid: raw_to_deg(read_u16(pk, ph, mid, ADDR_PRESENT_POSITION)) for mid in ids}
 
-def wait_until(pk: PacketHandler, ph: PortHandler, mid: int, target_deg: float,
-               tol_deg: float, timeout_s: float) -> bool:
+def wait_until(pk: PacketHandler, ph: PortHandler, mid: int, target_deg: float, tol_deg: float, timeout_s: float) -> bool:
     t0 = time.time()
     while time.time() - t0 < timeout_s:
         cur = raw_to_deg(read_u16(pk, ph, mid, ADDR_PRESENT_POSITION))
@@ -156,18 +133,6 @@ def wait_until(pk: PacketHandler, ph: PortHandler, mid: int, target_deg: float,
 # ----------------------------
 # Limits helpers
 # ----------------------------
-def bin_angle(deg: float, bin_deg: float) -> int:
-    return int(round(deg / bin_deg))
-
-def parse_key_to_bins(key: str) -> Dict[int, int]:
-    if key == "ROOT":
-        return {}
-    out: Dict[int, int] = {}
-    for part in key.split("|"):
-        sid, b = part.split("=")
-        out[int(sid)] = int(b)
-    return out
-
 def servo_key_from_pose(priority: List[int], target_id: int, pose_deg: Dict[int, float], bin_deg: float) -> str:
     parts = []
     for pid in priority:
@@ -189,9 +154,7 @@ def get_global_range(db: dict, mid: int) -> Optional[Tuple[float, float]]:
 
 def get_global_mid(db: dict, mid: int) -> float:
     r = get_global_range(db, mid)
-    if not r:
-        return 0.0
-    return midpoint(r[0], r[1])
+    return midpoint(r[0], r[1]) if r else 0.0
 
 def get_cond_range(db: dict, mid: int, key: str) -> Optional[Tuple[float, float]]:
     cm = db.get("conditional_limits", {}).get(str(mid), {})
@@ -203,29 +166,25 @@ def get_cond_range(db: dict, mid: int, key: str) -> Optional[Tuple[float, float]
         return None
     return mn, mx
 
-def forbidden_bins_set(db: dict) -> List[Dict[str, int]]:
-    return db.get("forbidden", []) or []
-
 
 # ----------------------------
-# Pose solver (priority + limits + forbidden avoidance)
+# Pose solver (priority + limits)
 # ----------------------------
 def solve_pose(
     db: dict,
     priority: List[int],
     desired: Dict[int, float],
     current: Dict[int, float],
+    global_only_ids: Set[int],
     prefer_current_for_unspecified: bool = True,
 ) -> Dict[int, float]:
     """
-    Build a final pose that respects:
-      - global range for each servo
-      - conditional range for each servo given higher-priority bins
-    Strategy:
+    Build a final pose:
       - iterate in priority order
-      - for each servo:
-          base = desired if specified else (current if prefer_current else global mid)
-          clamp to conditional range if exists else global range if exists else passthrough
+      - for each servo, base = desired if specified else current (or global mid)
+      - clamp:
+          - if global-only -> use global range only
+          - else prefer conditional for current higher-pose key, fallback to global
     """
     bin_deg = float(db["bin_deg"])
     pose: Dict[int, float] = {}
@@ -234,100 +193,33 @@ def solve_pose(
         base = desired.get(mid)
         if base is None:
             base = current[mid] if prefer_current_for_unspecified else get_global_mid(db, mid)
+        base = base % 360.0
 
-        # Determine applicable range
-        key = servo_key_from_pose(priority, mid, pose, bin_deg)  # uses already-fixed higher joints
-        cr = get_cond_range(db, mid, key)
         gr = get_global_range(db, mid)
 
-        if cr:
-            mn, mx = cr
-            pose[mid] = clamp(base, mn, mx)
-        elif gr:
-            mn, mx = gr
-            pose[mid] = clamp(base, mn, mx)
-        else:
-            pose[mid] = base % 360.0
-
-    return pose
-
-def is_forbidden_pose(db: dict, pose: Dict[int, float], priority: List[int]) -> bool:
-    fb = forbidden_bins_set(db)
-    if not fb:
-        return False
-    bin_deg = float(db["bin_deg"])
-    state = {str(mid): bin_angle(pose[mid], bin_deg) for mid in priority}
-    for entry in fb:
-        # forbidden entry must match all IDs present
-        if all(str(mid) in entry and entry[str(mid)] == state[str(mid)] for mid in priority):
-            return True
-    return False
-
-def resolve_forbidden(
-    db: dict,
-    priority: List[int],
-    desired: Dict[int, float],
-    current: Dict[int, float],
-    max_iters: int = 60,
-    step_deg: float = 2.0,
-) -> Dict[int, float]:
-    """
-    If a solved pose hits a forbidden binned combination, adjust *lowest-priority* joints only
-    toward neutral (their global midpoint), re-solving each time so constraints remain valid.
-
-    This is intentionally conservative and deterministic.
-    """
-    pose = solve_pose(db, priority, desired, current)
-    if not is_forbidden_pose(db, pose, priority):
-        return pose
-
-    # Work from lowest priority upward
-    low_to_high = list(reversed(priority))
-
-    # Precompute neutral points
-    neutral = {mid: get_global_mid(db, mid) for mid in priority}
-
-    # Copy desired so we can nudge only low-priority commands
-    nudged = dict(desired)
-
-    for _ in range(max_iters):
-        if not is_forbidden_pose(db, pose, priority):
-            return pose
-
-        changed = False
-        for mid in low_to_high:
-            # Do not modify high-priority if it is explicitly commanded and is among top-most constraints
-            # But per your rule, lower numbers have higher priority => we are allowed to adjust lower-priority only.
-            # So we always adjust from lowest upwards.
-            cur_cmd = nudged.get(mid, pose[mid])
-            tgt = neutral[mid]
-
-            # Nudge toward neutral
-            if circular_diff_deg(cur_cmd, tgt) < 1e-6:
-                continue
-
-            # Move small step toward tgt in linear domain (0..360) assuming your taught ranges do not wrap
-            if cur_cmd < tgt:
-                cur_cmd = min(cur_cmd + step_deg, tgt)
+        if mid in global_only_ids:
+            # global-only: ignore conditional
+            if gr:
+                pose[mid] = clamp(base, gr[0], gr[1])
             else:
-                cur_cmd = max(cur_cmd - step_deg, tgt)
+                pose[mid] = base
+            continue
 
-            nudged[mid] = cur_cmd
-            changed = True
+        key = servo_key_from_pose(priority, mid, pose, bin_deg)
+        cr = get_cond_range(db, mid, key)
 
-            pose = solve_pose(db, priority, nudged, current)
-            if not is_forbidden_pose(db, pose, priority):
-                return pose
+        if cr:
+            pose[mid] = clamp(base, cr[0], cr[1])
+        elif gr:
+            pose[mid] = clamp(base, gr[0], gr[1])
+        else:
+            pose[mid] = base
 
-        if not changed:
-            break
-
-    # If still forbidden after attempts, return best effort pose
     return pose
 
 
 # ----------------------------
-# Controller (REPL)
+# Controller REPL
 # ----------------------------
 def fmt_pose(priority: List[int], pose: Dict[int, float]) -> str:
     return "  ".join([f"{mid}:{pose[mid]:7.2f}°" for mid in priority])
@@ -336,55 +228,7 @@ def move_pose_priority(pk, ph, priority: List[int], pose: Dict[int, float], spee
     for mid in priority:
         move_deg(pk, ph, mid, pose[mid], speed, time_ms)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="/dev/ttyACM0")
-    ap.add_argument("--baudrate", type=int, default=1_000_000)
-    ap.add_argument("--limits", required=True, help="Path to limits.json from teach_limits.py")
-    ap.add_argument("--tol-deg", type=float, default=2.0)
-    ap.add_argument("--timeout-s", type=float, default=4.0)
-    ap.add_argument("--time-ms", type=int, default=0)
-    ap.add_argument("--speed", type=int, default=450)
-    ap.add_argument("--edge-speed", type=int, default=250, help="Used for forbidden-resolution micro-steps.")
-    ap.add_argument("--no-wait", action="store_true", help="Do not wait for move completion.")
-    args = ap.parse_args()
-
-    with open(args.limits, "r", encoding="utf-8") as f:
-        db = json.load(f)
-
-    ids = [int(x) for x in db["ids"]]
-    priority = [int(x) for x in db["priority"]]
-
-    ph, pk = open_bus(args.port, args.baudrate, protocol_end=0)
-
-    desired: Dict[int, float] = {}  # user-set targets
-    speed = args.speed
-    edge_speed = args.edge_speed
-    do_wait = not args.no_wait
-
-    try:
-        set_torque(pk, ph, ids, on=True)
-
-        def apply_move():
-            nonlocal desired
-            cur = read_angles(pk, ph, priority)
-
-            # Solve with forbidden-resolution
-            pose = resolve_forbidden(db, priority, desired, cur)
-
-            # Move
-            move_pose_priority(pk, ph, priority, pose, speed, args.time_ms)
-
-            # Wait (optional)
-            if do_wait:
-                for mid in priority:
-                    wait_until(pk, ph, mid, pose[mid], args.tol_deg, args.timeout_s)
-
-            # If pose differs from desired for low-priority joints, keep desired as-is (it remains user's intent),
-            # but show final pose.
-            return cur, pose
-
-        help_text = """
+HELP = """
 Commands:
   help
   ids
@@ -396,21 +240,61 @@ Commands:
   neutral                   move all to neutral (global midpoints)
   torque on|off
   speed <u16>
-  edgespeed <u16>
   wait on|off
-  clear                     clear desired targets (controller will hold current as neutral basis)
-  quit / q
-"""
-        print(help_text.strip())
+  clear                     clear desired targets
+  q / quit
+""".strip()
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--baudrate", type=int, default=1_000_000)
+    ap.add_argument("--limits", required=True)
+    ap.add_argument("--global-only-ids", type=int, nargs="*", default=[],
+                    help="IDs that should clamp only to global min/max (e.g., gripper). Example: --global-only-ids 6")
+    ap.add_argument("--speed", type=int, default=450)
+    ap.add_argument("--time-ms", type=int, default=0)
+    ap.add_argument("--tol-deg", type=float, default=2.0)
+    ap.add_argument("--timeout-s", type=float, default=4.0)
+    ap.add_argument("--no-wait", action="store_true")
+    args = ap.parse_args()
+
+    with open(args.limits, "r", encoding="utf-8") as f:
+        db = json.load(f)
+
+    ids = [int(x) for x in db["ids"]]
+    priority = [int(x) for x in db["priority"]]
+    global_only = set(int(x) for x in (args.global_only_ids or db.get("global_only_ids", []) or []))
+
+    for gid in global_only:
+        if gid not in ids:
+            raise SystemExit(f"[ERROR] global-only id {gid} not in limits IDs {ids}")
+
+    ph, pk = open_bus(args.port, args.baudrate, protocol_end=0)
+
+    desired: Dict[int, float] = {}
+    speed = args.speed
+    do_wait = not args.no_wait
+
+    try:
+        set_torque(pk, ph, ids, on=True)
+        print(HELP)
+
+        def apply_move():
+            cur = read_angles(pk, ph, priority)
+            pose = solve_pose(db, priority, desired, cur, global_only_ids=global_only)
+
+            move_pose_priority(pk, ph, priority, pose, speed, args.time_ms)
+
+            if do_wait:
+                for mid in priority:
+                    wait_until(pk, ph, mid, pose[mid], args.tol_deg, args.timeout_s)
+            return cur, pose
 
         while True:
-            try:
-                line = input("> ").strip()
-            except EOFError:
-                break
+            line = input("> ").strip()
             if not line:
                 continue
-
             parts = line.split()
             cmd = parts[0].lower()
 
@@ -418,12 +302,13 @@ Commands:
                 break
 
             if cmd == "help":
-                print(help_text.strip())
+                print(HELP)
                 continue
 
             if cmd == "ids":
                 print(f"IDs: {ids}")
                 print(f"Priority: {priority}")
+                print(f"Global-only: {sorted(global_only)}")
                 print(f"Bin size: {db['bin_deg']} deg")
                 continue
 
@@ -434,9 +319,9 @@ Commands:
 
             if cmd == "show":
                 cur = read_angles(pk, ph, priority)
-                final_pose = resolve_forbidden(db, priority, desired, cur)
-                print("Desired:", "  ".join([f"{mid}:{desired[mid]:7.2f}°" for mid in priority if mid in desired]) or "(none)")
-                print("Final:  ", fmt_pose(priority, final_pose))
+                pose = solve_pose(db, priority, desired, cur, global_only_ids=global_only)
+                print("Desired:", "  ".join([f"{mid}:{desired[mid]:.2f}°" for mid in priority if mid in desired]) or "(none)")
+                print("Final:  ", fmt_pose(priority, pose))
                 continue
 
             if cmd == "clear":
@@ -473,14 +358,10 @@ Commands:
                 print(f"[OK] speed={speed}")
                 continue
 
-            if cmd == "edgespeed" and len(parts) == 2:
-                edge_speed = int(parts[1])
-                print(f"[OK] edge_speed={edge_speed}")
-                continue
-
             if cmd == "neutral":
-                # Set desired to neutral for all and move
-                desired = {mid: get_global_mid(db, mid) for mid in priority}
+                desired.clear()
+                for mid in priority:
+                    desired[mid] = get_global_mid(db, mid)
                 cur, pose = apply_move()
                 print("Current:", fmt_pose(priority, cur))
                 print("Final:  ", fmt_pose(priority, pose))
@@ -529,9 +410,8 @@ Commands:
             print("[INFO] Unknown command. Type 'help'.")
 
     finally:
-        # torque on exit: leave ON by default; you can change here if you prefer
         close_bus(ph)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
