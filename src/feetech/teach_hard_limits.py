@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """
 STS3215 continuous limit teaching (read continuously, write once at the end)
+with an in-place updating console table (no scrolling).
 
 What it does:
 - Scan IDs (PING)
 - Loop at --hz reading Present_Position (addr 0x38) for each found servo
 - Track learned min/max ticks in RAM (expand when position goes outside range)
-- Print live status
+- Display a compact live table that refreshes in-place
 - Optional autosave to JSON
-- On Ctrl+C (or 'q' + Enter), write learned min/max to each servo once:
+- On exit (Ctrl+C or 'q' + Enter), write learned min/max to each servo once:
     MinAngleLimit addr 0x0B (2 bytes)
     MaxAngleLimit addr 0x09 (2 bytes)
   Then verify by re-reading.
 
-Notes:
-- This assumes the Feetech packet format: FF FF ID LEN INST PARAMS... CHK
-- Checksum = ~(ID + LEN + INST + sum(PARAMS)) & 0xFF
-- Response: FF FF ID LEN ERR PARAMS... CHK
-
 Run:
-  python3 teach_limits_end_write.py --port /dev/ttyACM0 --baudrate 1000000 --scan-max 20 --hz 40 --out limits.json
+  python3 teach_limits_end_write_tui.py --port /dev/ttyACM0 --baudrate 1000000 --scan-max 20 --hz 40 --print-hz 10 --out limits.json
 Stop:
-  Ctrl+C  (writes limits to servos once and exits)
+  Ctrl+C  (saves + writes limits once and exits)
 """
 
 import argparse
@@ -182,14 +178,52 @@ def atomic_write_json(path: str, obj: dict) -> None:
 
 
 # -----------------------------
-# Main
+# Console (in-place display)
 # -----------------------------
+def clear_screen_if_tty() -> None:
+    # Clear screen + move cursor to top-left (only if interactive terminal)
+    if sys.stdout.isatty():
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
+
+
 def stdin_has_line() -> bool:
-    # Non-blocking check for user commands
+    # Non-blocking check for user commands (works on Linux terminals)
     r, _, _ = select.select([sys.stdin], [], [], 0.0)
     return bool(r)
 
 
+def render_table(found: List[int], learned: Dict[int, Dict[str, int]], elapsed: float) -> None:
+    clear_screen_if_tty()
+
+    print(f"STS3215 LIMIT TEACHING  |  t = {elapsed:7.2f} s")
+    print("=" * 72)
+    print(f"{'ID':>3} | {'CUR (deg)':>10} | {'MIN (deg)':>10} | {'MAX (deg)':>10} | {'CUR (ticks)':>10}")
+    print("-" * 72)
+
+    for sid in found:
+        if sid not in learned:
+            print(f"{sid:>3} | {'--':>10} | {'--':>10} | {'--':>10} | {'--':>10}")
+            continue
+
+        cur = learned[sid]["last"]
+        mn  = learned[sid]["min"]
+        mx  = learned[sid]["max"]
+
+        print(
+            f"{sid:>3} | "
+            f"{ticks_to_deg(cur):10.2f} | "
+            f"{ticks_to_deg(mn):10.2f} | "
+            f"{ticks_to_deg(mx):10.2f} | "
+            f"{cur:10d}"
+        )
+
+    print("\nMove the arm by hand. Ctrl+C (or 'q'+Enter) to finish and write limits once.")
+
+
+# -----------------------------
+# Main
+# -----------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description="Continuously teach STS3215 angle limits; write once at exit.")
     ap.add_argument("--port", default="/dev/ttyACM0")
@@ -198,14 +232,11 @@ def main() -> int:
     ap.add_argument("--scan-max", type=int, default=20)
     ap.add_argument("--timeout", type=float, default=0.05, help="Per transaction timeout (s)")
     ap.add_argument("--hz", type=float, default=40.0, help="Sample rate (Hz)")
-    ap.add_argument("--print-hz", type=float, default=10.0, help="Console print rate (Hz)")
+    ap.add_argument("--print-hz", type=float, default=10.0, help="Console refresh rate (Hz)")
     ap.add_argument("--out", default="limits_learned.json", help="Autosave JSON path")
     ap.add_argument("--autosave-s", type=float, default=5.0, help="Autosave interval (s); 0 disables")
     ap.add_argument("--no-autosave", action="store_true", help="Disable autosave")
-    ap.add_argument("--write-on-exit", action="store_true", default=True,
-                    help="Write learned limits to servos on exit (default: enabled)")
-    ap.add_argument("--no-write-on-exit", dest="write_on_exit", action="store_false",
-                    help="Do not write to servos on exit (just report/save)")
+    ap.add_argument("--no-write-on-exit", action="store_true", help="Do not write limits to servos on exit")
     args = ap.parse_args()
 
     dt = 1.0 / max(1e-6, args.hz)
@@ -236,24 +267,18 @@ def main() -> int:
             print(f"No servos found on {args.port} in ID range {args.scan_min}..{args.scan_max}.")
             return 1
 
-        print(f"Found servos: {found}")
-        print("Teaching limits now. Move the arm by hand.")
-        print("Stop with Ctrl+C, or type 'q' then Enter.")
-        print("")
-
         # Learned limits in ticks: {id: {"min": int, "max": int, "last": int}}
         learned: Dict[int, Dict[str, int]] = {}
 
-        # Initialize from current position (and optionally could read current limits too)
+        # Initialize from current position
         for sid in found:
             pos_b = read_bytes(ser, sid, ADDR_PRESENT_POS, 2, args.timeout)
             if pos_b is None:
-                # still initialize to a safe default
                 continue
             pos = le_u16(pos_b)
             learned[sid] = {"min": pos, "max": pos, "last": pos}
 
-        # Timing for printing/autosave
+        # Timing for display/autosave
         t_last_print = 0.0
         t_last_save = 0.0
         start = time.time()
@@ -262,7 +287,7 @@ def main() -> int:
             while True:
                 t0 = time.time()
 
-                # user command
+                # user command (q to quit)
                 if stdin_has_line():
                     line = sys.stdin.readline().strip().lower()
                     if line in ("q", "quit", "exit"):
@@ -272,7 +297,6 @@ def main() -> int:
                 for sid in found:
                     pos_b = read_bytes(ser, sid, ADDR_PRESENT_POS, 2, args.timeout)
                     if pos_b is None:
-                        # keep going; bus noise happens
                         continue
                     pos = le_u16(pos_b)
 
@@ -287,25 +311,10 @@ def main() -> int:
 
                 now = time.time()
 
-                # Print
+                # Display
                 if now - t_last_print >= print_dt:
                     t_last_print = now
-                    elapsed = now - start
-                    print(f"t={elapsed:7.2f}s")
-                    for sid in found:
-                        if sid not in learned:
-                            print(f"  ID {sid:3d}: (no data)")
-                            continue
-                        mn = learned[sid]["min"]
-                        mx = learned[sid]["max"]
-                        cur = learned[sid]["last"]
-                        print(
-                            f"  ID {sid:3d}: "
-                            f"CUR={cur:4d} ({ticks_to_deg(cur):7.2f}°)  "
-                            f"MIN={mn:4d} ({ticks_to_deg(mn):7.2f}°)  "
-                            f"MAX={mx:4d} ({ticks_to_deg(mx):7.2f}°)"
-                        )
-                    print("")
+                    render_table(found, learned, elapsed=now - start)
 
                 # Autosave
                 if (not args.no_autosave) and args.autosave_s > 0 and (now - t_last_save >= args.autosave_s):
@@ -320,7 +329,9 @@ def main() -> int:
                     try:
                         atomic_write_json(args.out, payload)
                     except Exception as e:
-                        print(f"WARNING: autosave failed: {e}", file=sys.stderr)
+                        # keep UI clean; print once per failure only if needed
+                        if not sys.stdout.isatty():
+                            print(f"WARNING: autosave failed: {e}", file=sys.stderr)
 
                 # Rate control
                 sleep_s = dt - (time.time() - t0)
@@ -340,47 +351,52 @@ def main() -> int:
         }
         try:
             atomic_write_json(args.out, payload)
-            print(f"Saved learned limits to: {args.out}")
         except Exception as e:
             print(f"WARNING: final save failed: {e}", file=sys.stderr)
 
+        # Final display before writing
+        render_table(found, learned, elapsed=time.time() - start)
+        print(f"\nSaved learned limits to: {args.out}")
+
         # Write once at the end
-        if args.write_on_exit:
-            print("\nWriting learned limits to servos (once)...")
-            for sid in found:
-                if sid not in learned:
-                    print(f"  ID {sid:3d}: skipped (no learned data)")
-                    continue
-                mn = int(learned[sid]["min"])
-                mx = int(learned[sid]["max"])
-
-                # Basic sanity clamp
-                mn = max(0, min(4095, mn))
-                mx = max(0, min(4095, mx))
-                if mx < mn:
-                    mn, mx = mx, mn
-
-                ok_min = write_bytes(ser, sid, ADDR_MIN_ANGLE_LIMIT, u16_to_le(mn), args.timeout)
-                ok_max = write_bytes(ser, sid, ADDR_MAX_ANGLE_LIMIT, u16_to_le(mx), args.timeout)
-
-                # Verify
-                vmin_b = read_bytes(ser, sid, ADDR_MIN_ANGLE_LIMIT, 2, args.timeout)
-                vmax_b = read_bytes(ser, sid, ADDR_MAX_ANGLE_LIMIT, 2, args.timeout)
-                vmin = le_u16(vmin_b) if vmin_b else None
-                vmax = le_u16(vmax_b) if vmax_b else None
-
-                print(
-                    f"  ID {sid:3d}: "
-                    f"WRITE(min={mn}, max={mx}) "
-                    f"ACK(min={ok_min}, max={ok_max}) "
-                    f"VERIFY(min={vmin}, max={vmax})"
-                )
-
-            print("Done.")
-        else:
+        if args.no_write_on_exit:
             print("\nNot writing to servos (--no-write-on-exit enabled).")
+            return 0
 
-    return 0
+        print("\nWriting learned limits to servos (once)...")
+        for sid in found:
+            if sid not in learned:
+                print(f"  ID {sid:3d}: skipped (no learned data)")
+                continue
+
+            mn = int(learned[sid]["min"])
+            mx = int(learned[sid]["max"])
+
+            # sanity clamp
+            mn = max(0, min(4095, mn))
+            mx = max(0, min(4095, mx))
+            if mx < mn:
+                mn, mx = mx, mn
+
+            ok_min = write_bytes(ser, sid, ADDR_MIN_ANGLE_LIMIT, u16_to_le(mn), args.timeout)
+            ok_max = write_bytes(ser, sid, ADDR_MAX_ANGLE_LIMIT, u16_to_le(mx), args.timeout)
+
+            # Verify
+            vmin_b = read_bytes(ser, sid, ADDR_MIN_ANGLE_LIMIT, 2, args.timeout)
+            vmax_b = read_bytes(ser, sid, ADDR_MAX_ANGLE_LIMIT, 2, args.timeout)
+            vmin = le_u16(vmin_b) if vmin_b else None
+            vmax = le_u16(vmax_b) if vmax_b else None
+
+            print(
+                f"  ID {sid:3d}: "
+                f"min={mn} ({ticks_to_deg(mn):.2f}°)  "
+                f"max={mx} ({ticks_to_deg(mx):.2f}°)  "
+                f"ACK(min={ok_min}, max={ok_max})  "
+                f"VERIFY(min={vmin}, max={vmax})"
+            )
+
+        print("Done.")
+        return 0
 
 
 if __name__ == "__main__":
