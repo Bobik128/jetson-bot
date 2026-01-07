@@ -125,20 +125,48 @@ class STS3215Bus:
             pass
 
     def _write_1b(self, motor_id: int, addr: int, value: int) -> None:
-        _, comm, err = self.packet_handler.write1ByteTxRx(self.port_handler, motor_id, addr, value)
+        ret = self.packet_handler.write1ByteTxRx(self.port_handler, motor_id, addr, value)
+        # Some scservo_sdk builds return (comm, err); others return (something, comm, err)
+        if isinstance(ret, tuple) and len(ret) == 2:
+            comm, err = ret
+        elif isinstance(ret, tuple) and len(ret) == 3:
+            _, comm, err = ret
+        else:
+            raise RuntimeError(f"Unexpected return from write1ByteTxRx: {ret!r}")
         self._check(comm, err, motor_id, f"write1B addr={addr} value={value}")
 
     def _write_2b(self, motor_id: int, addr: int, value: int) -> None:
-        _, comm, err = self.packet_handler.write2ByteTxRx(self.port_handler, motor_id, addr, value)
+        ret = self.packet_handler.write2ByteTxRx(self.port_handler, motor_id, addr, value)
+        if isinstance(ret, tuple) and len(ret) == 2:
+            comm, err = ret
+        elif isinstance(ret, tuple) and len(ret) == 3:
+            _, comm, err = ret
+        else:
+            raise RuntimeError(f"Unexpected return from write2ByteTxRx: {ret!r}")
         self._check(comm, err, motor_id, f"write2B addr={addr} value={value}")
 
     def _read_1b(self, motor_id: int, addr: int) -> int:
-        val, comm, err = self.packet_handler.read1ByteTxRx(self.port_handler, motor_id, addr)
+        ret = self.packet_handler.read1ByteTxRx(self.port_handler, motor_id, addr)
+        # Usually returns (val, comm, err). Some builds might return (val, comm) or similar.
+        if isinstance(ret, tuple) and len(ret) == 3:
+            val, comm, err = ret
+        elif isinstance(ret, tuple) and len(ret) == 2:
+            val, comm = ret
+            err = 0
+        else:
+            raise RuntimeError(f"Unexpected return from read1ByteTxRx: {ret!r}")
         self._check(comm, err, motor_id, f"read1B addr={addr}")
         return int(val)
 
     def _read_2b(self, motor_id: int, addr: int) -> int:
-        val, comm, err = self.packet_handler.read2ByteTxRx(self.port_handler, motor_id, addr)
+        ret = self.packet_handler.read2ByteTxRx(self.port_handler, motor_id, addr)
+        if isinstance(ret, tuple) and len(ret) == 3:
+            val, comm, err = ret
+        elif isinstance(ret, tuple) and len(ret) == 2:
+            val, comm = ret
+            err = 0
+        else:
+            raise RuntimeError(f"Unexpected return from read2ByteTxRx: {ret!r}")
         self._check(comm, err, motor_id, f"read2B addr={addr}")
         return int(val)
 
