@@ -213,6 +213,16 @@ class STS3215Bus:
         addr, _ = CTRL_TABLE["Acceleration"]
         self._write_1b(motor_id, addr, acceleration)
 
+    def sync_write_goal_position(self, ids_to_pos: dict[int, int]):
+        """
+        Minimal sequential write (works everywhere). We avoid GroupSyncWrite because
+        scservo_sdk variants differ a lot.
+        """
+        addr, _ = CTRL_TABLE["Goal_Position"]
+        for motor_id, pos in ids_to_pos.items():
+            raw = encode_sign_magnitude(int(pos), SIGN_BITS["Goal_Position"])
+            self._write_2b(motor_id, addr, raw)
+
 
 def wait_for_enter_in_thread(prompt: str) -> threading.Event:
     evt = threading.Event()
