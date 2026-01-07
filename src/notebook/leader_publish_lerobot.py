@@ -10,23 +10,22 @@ from lerobot.motors.feetech import FeetechMotorsBus
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="/dev/ttyACM0", help="Leader arm USB serial port")
+    ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--baudrate", type=int, default=1_000_000)
-    ap.add_argument("--jetson_ip", required=True, help="Jetson Tailscale IP (100.x.y.z)")
+    ap.add_argument("--jetson_ip", required=True)
     ap.add_argument("--udp_port", type=int, default=5005)
     ap.add_argument("--hz", type=float, default=50.0)
-    ap.add_argument("--ids", type=int, nargs="+", default=[2, 3, 4, 6], help="Servo IDs to publish")
+    ap.add_argument("--ids", type=int, nargs="+", default=[2, 3, 4, 6])
     args = ap.parse_args()
 
-    # Minimal motors dict for LeRobot bus.
-    # Names are arbitrary, IDs must match your leader arm IDs.
-    motors = {f"id_{i}": Motor(i, "sts3215", MotorNormMode.RAW) for i in args.ids}
+    # Use DEGREES (available in LeRobot; you used it in SO101Follower snippet too)
+    motors = {f"id_{i}": Motor(i, "sts3215", MotorNormMode.DEGREES) for i in args.ids}
 
     bus = FeetechMotorsBus(
         port=args.port,
         motors=motors,
-        calibration=None,      # We just need Present_Position; calibration optional
-        protocol_version=0,    # STS3215 uses protocol 0
+        calibration=None,
+        protocol_version=0,
     )
 
     print(f"[leader] Connecting to {args.port} @ {args.baudrate} ...")
@@ -36,14 +35,14 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     dt = 1.0 / args.hz
 
-    print(f"[leader] Streaming IDs {args.ids} to {args.jetson_ip}:{args.udp_port} at {args.hz} Hz")
+    print(f"[leader] Streaming DEGREES for IDs {args.ids} -> {args.jetson_ip}:{args.udp_port} @ {args.hz} Hz")
     try:
         while True:
-            # Returns dict keyed by motor names (id_2, id_3, ...)
-            pos = bus.sync_read("Present_Position")  # RAW ticks if MotorNormMode.RAW
+            pos = bus.sync_read("Present_Position")  # values in degrees now
             payload = {
                 "t": time.time(),
-                "q": {int(name.split("_")[1]): int(val) for name, val in pos.items()},
+                "unit": "deg",
+                "q": {int(name.split('_')[1]): float(val) for name, val in pos.items()},
             }
             sock.sendto(json.dumps(payload).encode("utf-8"), (args.jetson_ip, args.udp_port))
             time.sleep(dt)

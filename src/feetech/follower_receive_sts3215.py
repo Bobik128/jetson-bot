@@ -17,6 +17,10 @@ except Exception as e:
 
 MIN_ADDR = CTRL_TABLE["Min_Position_Limit"][0]
 MAX_ADDR = CTRL_TABLE["Max_Position_Limit"][0]
+STS_RES = 4096
+
+def deg_to_ticks(deg: float) -> int:
+    return int(round(deg * STS_RES / 360.0))
 
 
 def clamp(x, lo, hi):
@@ -76,7 +80,11 @@ def main():
             try:
                 data, _ = sock.recvfrom(4096)
                 msg = json.loads(data.decode("utf-8"))
-                q_in = {int(k): int(v) for k, v in msg["q"].items()}
+                if msg.get("unit") == "deg":
+                    q_in = {int(k): deg_to_ticks(float(v)) for k, v in msg["q"].items()}
+                else:
+                    q_in = {int(k): int(v) for k, v in msg["q"].items()}
+
                 last_packet_t = time.time()
                 got = True
             except socket.timeout:
