@@ -231,6 +231,17 @@ def main():
             for mid in ids:
                 bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 1)
 
+
+            # for mid, u in u_by_id.items():
+            #     if mid == 6:
+            #         u = 0.5
+
+            shoulder_lift_rad = u_by_id[2] * 2.2296 + 1
+            elbow_flex_rad = u_by_id[3] * -3.5779 + 3.8606
+            wrist_flex_rad = u_by_id[4] * 0.4862 + 1.3379
+
+            print(a=shoulder_lift_rad, b=elbow_flex_rad, c=wrist_flex_rad)
+
             goals: Dict[int, int] = {}
             for mid, u in u_by_id.items():
                 lo, hi = map_limits[mid]
