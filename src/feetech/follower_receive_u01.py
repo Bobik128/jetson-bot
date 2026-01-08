@@ -246,8 +246,8 @@ def main():
             #         u = 0.5
 
             shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 31, 90)
-            elbow_flex_rad = map_range(u_by_id(3), 1, 0.66, 24, 90)
-            wrist_flex_rad = map_range(u_by_id(4), 0, 0.47, 256, 180)
+            elbow_flex_rad = map_range(u_by_id[3], 1, 0.66, 24, 90)
+            wrist_flex_rad = map_range(u_by_id[4], 0, 0.47, 256, 180)
 
             print(f"shoulder_lift_rad={shoulder_lift_rad}, elbow_flex_rad={elbow_flex_rad}, wrist_flex_rad={wrist_flex_rad}")
 
