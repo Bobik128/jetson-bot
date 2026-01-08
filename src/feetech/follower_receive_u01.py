@@ -245,7 +245,7 @@ def main():
             #     if mid == 6:
             #         u = 0.5
 
-            shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 128, 90)
+            shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 122, 90)
             elbow_flex_rad = map_range(u_by_id[3], 1, 0.66, 24, 90)
             wrist_flex_rad = map_range(u_by_id[4], 0, 0.47, 256, 180)
 
