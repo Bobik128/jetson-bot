@@ -129,6 +129,15 @@ def load_calib_ranges(path: str) -> Dict[int, Tuple[int, int]]:
         out[int(d["id"])] = (int(d["range_min"]), int(d["range_max"]))
     return out
 
+def map_range(x, in_min, in_max, out_min, out_max):
+    """
+    Linearly maps x from [in_min, in_max] to [out_min, out_max].
+    """
+    if in_max == in_min:
+        raise ValueError("in_min and in_max must be different")
+
+    return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
@@ -236,9 +245,9 @@ def main():
             #     if mid == 6:
             #         u = 0.5
 
-            shoulder_lift_rad = u_by_id[2] * 2.2296
-            elbow_flex_rad = u_by_id[3] * -3.5779 + 2.8606
-            wrist_flex_rad = u_by_id[4] * 0.4862 + 0.3379
+            shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 31, 90)
+            elbow_flex_rad = map_range(u_by_id(3), 1, 0.66, 24, 90)
+            wrist_flex_rad = map_range(u_by_id(4), 0, 0.47, 256, 180)
 
             print(f"shoulder_lift_rad={shoulder_lift_rad}, elbow_flex_rad={elbow_flex_rad}, wrist_flex_rad={wrist_flex_rad}")
 
