@@ -236,9 +236,9 @@ def main():
             #     if mid == 6:
             #         u = 0.5
 
-            shoulder_lift_rad = u_by_id[2] * 2.2296 + 1
-            elbow_flex_rad = u_by_id[3] * -3.5779 + 3.8606
-            wrist_flex_rad = u_by_id[4] * 0.4862 + 1.3379
+            shoulder_lift_rad = u_by_id[2] * 2.2296
+            elbow_flex_rad = u_by_id[3] * -3.5779 + 2.8606
+            wrist_flex_rad = u_by_id[4] * 0.4862 + 0.3379
 
             print(f"shoulder_lift_rad={shoulder_lift_rad}, elbow_flex_rad={elbow_flex_rad}, wrist_flex_rad={wrist_flex_rad}")
 
