@@ -4,6 +4,7 @@ import json
 import socket
 import sys
 import time
+import math
 from typing import Dict, Tuple, Optional
 
 import scservo_sdk as scs
@@ -138,6 +139,29 @@ def map_range(x, in_min, in_max, out_min, out_max):
 
     return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
 
+def is_touching_danger_zone(a, b, c, r) -> bool:
+    x1 = math.cos(a) * 11.6
+    y1 = math.sin(a) * 11.6
+
+    omega = math.pi - a - b
+    x2 = math.cos(omega) * 10.5
+    y2 = math.sin(omega) * 10.5
+
+    fi = omega + (c - math.pi)
+    x3 = math.cos(fi) * 5.7
+    y3 = math.sin(fi) * 5.7
+
+    finalX = x1 + x2 + x3
+    finalY = y1 + y2 + y3
+
+    closestX = min(finalX, 6)
+    closestY = min(finalY, 1)
+
+    dx = finalX - closestX
+    dy = finalY - closestY
+
+    return (dx * dx + dy * dy) <= (r * r)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
@@ -245,11 +269,13 @@ def main():
             #     if mid == 6:
             #         u = 0.5
 
-            shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 123, 90)
-            elbow_flex_rad = map_range(u_by_id[3], 1, 0.66, 24, 90)
-            wrist_flex_rad = map_range(u_by_id[4], 0, 0.47, 256, 180)
+            shoulder_lift_rad = math.radians(map_range(u_by_id[2], 0, 0.25, 123, 90))
+            elbow_flex_rad = math.radians(map_range(u_by_id[3], 1, 0.66, 24, 90))
+            wrist_flex_rad = math.radians(map_range(u_by_id[4], 0, 0.47, 256, 180))
 
-            print(f"shoulder_lift_rad={shoulder_lift_rad}, elbow_flex_rad={elbow_flex_rad}, wrist_flex_rad={wrist_flex_rad}")
+            touchung: bool = is_touching_danger_zone(shoulder_lift_rad, elbow_flex_rad, wrist_flex_rad, 6.5)
+
+            print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}, touching={touchung}")
 
             goals: Dict[int, int] = {}
             for mid, u in u_by_id.items():
