@@ -240,7 +240,7 @@ def main():
             elbow_flex_rad = u_by_id[3] * -3.5779 + 3.8606
             wrist_flex_rad = u_by_id[4] * 0.4862 + 1.3379
 
-            print(a=shoulder_lift_rad, b=elbow_flex_rad, c=wrist_flex_rad)
+            print(shoulder_lift_rad={shoulder_lift_rad}, elbow_flex_rad={elbow_flex_rad}, wrist_flex_rad={wrist_flex_rad})
 
             goals: Dict[int, int] = {}
             for mid, u in u_by_id.items():
