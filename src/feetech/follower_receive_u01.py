@@ -271,11 +271,11 @@ def main():
             #     if mid == 6:
             #         u = 0.5
 
-            shoulder_lift_rad = math.radians(map_range(u_by_id[2], 0, 0.25, 123, 90))
-            elbow_flex_rad = math.radians(map_range(u_by_id[3], 1, 0.66, 24, 90))
-            wrist_flex_rad = math.radians(map_range(u_by_id[4], 0, 0.47, 256, 180))
+            shoulder_lift_rad = map_range(u_by_id[2], 0, 0.25, 123, 90)
+            elbow_flex_rad = map_range(u_by_id[3], 1, 0.66, 24, 90)
+            wrist_flex_rad = map_range(u_by_id[4], 0, 0.47, 256, 180)
 
-            touchung: bool = is_touching_danger_zone(shoulder_lift_rad, elbow_flex_rad, wrist_flex_rad, 6.5)
+            touchung: bool = is_touching_danger_zone(math.radians(shoulder_lift_rad), math.radians(elbow_flex_rad), math.radians(wrist_flex_rad), 6.5)
 
             print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}, touching={touchung}")
 
