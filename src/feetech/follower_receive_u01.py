@@ -167,100 +167,70 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
 def clamp01(v):
     return max(0, min(1, v))
 
-def clamp(v):
-    return max(-1, min(1, v))
-
-def sdf_zone(x, y, cx, cy, r):
-    dx = x - cx
-    dy = y - cy
-
-    qx = max(dx, 0)
-    qy = max(dy, 0)
-
-    return math.sqrt(qx*qx + qy*qy) - r
-
-def sdf_normal(x, y, cx, cy):
-    dx = x - cx
-    dy = y - cy
-
-    qx = max(dx, 0)
-    qy = max(dy, 0)
-
-    l = math.sqrt(qx*qx + qy*qy)
-
-    if l < 1e-6:
-        return 1.0, 1.0
-
-    return qx/l, qy/l
 
 def remap_values_to_zone(u_by_id):
+    r = 6        # poloměr zakázané zóny
+    margin = 0.2 # bezpečnostní okraj
 
-    L1 = 11.6
-    L2 = 10.5
-    L3 = 5.2
+    # převod vstupů do úhlů
+    a = math.radians(map_range(u_by_id[2], 0, 0.25, 125, 90))
+    b = math.radians(map_range(u_by_id[3], 1, 0.66, 19, 90))
+    c = math.radians(map_range(u_by_id[4], 1, 0.47, 102, 180))
 
-    r = 6
-    margin = 0.2
-
-    cx = 6
-    cy = -0.8
-
-    # --- vstupy
-    a = map_range(u_by_id[2], 0, 0.25, 125, 90)
-    b = map_range(u_by_id[3], 1, 0.66, 19, 90)
-    c = map_range(u_by_id[4], 1, 0.47, 102, 180)
-
-    a = math.radians(a)
-    b = math.radians(b)
-    c = math.radians(c)
-
-    # --- FK
-    x1 = math.cos(a) * L1
-    y1 = math.sin(a) * L1
-
+    # počáteční segmenty
+    x1, y1 = math.cos(a)*11.6, math.sin(a)*11.6
     omega = -(math.pi - a - b)
-    x2 = math.cos(omega) * L2
-    y2 = math.sin(omega) * L2
-
+    x2, y2 = math.cos(omega)*10.5, math.sin(omega)*10.5
     fi = omega + (c - math.pi)
+    x3, y3 = math.cos(fi)*5.2, math.sin(fi)*5.2
 
-    x3 = math.cos(fi) * L3
-    y3 = math.sin(fi) * L3
-
+    # finální pozice
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-    # --- SDF test
-    d = sdf_zone(finalX, finalY, cx, cy, r)
+    # --- kontrola stěn ---
+    if finalX < 6:
+        finalX = 6
+    if finalY < -0.8:
+        finalY = -0.8
 
-    if d < 0:
-        nx, ny = sdf_normal(finalX, finalY, cx, cy)
-        push = -d + margin
+    # --- kontrola rohu (s center posunutým o poloměr) ---
+    corner_cx = 6 - r
+    corner_cy = -0.8 - r
+    corner_dx = finalX - corner_cx
+    corner_dy = finalY - corner_cy
+    corner_dist_sq = corner_dx*corner_dx + corner_dy*corner_dy
 
-        safeX = finalX + nx * push
-        safeY = finalY + ny * push
+    if corner_dist_sq < r*r:
+        dist = math.sqrt(corner_dist_sq)
+        if dist == 0:
+            safeX = corner_cx + r + margin
+            safeY = corner_cy + r + margin
+        else:
+            scale = (r + margin) / dist
+            safeX = corner_cx + corner_dx * scale
+            safeY = corner_cy + corner_dy * scale
 
-        # ---- odečti třetí článek (c zůstává!)
-        tx = safeX - math.cos(fi) * L3
-        ty = safeY - math.sin(fi) * L3
+        print(f"Kolize! X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
 
-        length = math.sqrt(tx*tx + ty*ty)
-
-        if length > L1 + L2 or length < abs(L1 - L2):
+        # uprav segmenty pro zachování délky
+        length = math.sqrt((safeX - x3)**2 + (safeY - y3)**2)
+        if length < 1e-6:
             return u_by_id
 
-        beta = math.acos(clamp((L1*L1 + L2*L2 - length*length)/(2*L1*L2)))
-        alpha2 = math.acos(clamp((length*length + L1*L1 - L2*L2)/(2*length*L1)))
+        def clamp(v):
+            return max(-1, min(1, v))
 
-        base = math.atan2(ty, tx)
+        alpha2 = math.acos(clamp((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6)))
+        beta   = math.acos(clamp((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6)))
+        alpha  = math.atan2(safeY - y3, safeX - x3) + alpha2
 
-        a = base + alpha2
-        b = math.pi - beta
+        u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+        u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+        return u_by_id
 
-        # --- zpět do 0..1
-        u_by_id[2] = clamp01(map_range(math.degrees(a), 125, 90, 0, 0.25))
-        u_by_id[3] = clamp01(map_range(math.degrees(b), 19, 90, 1, 0.66))
-
+    # pokud žádná kolize, vracíme původní hodnoty
+    print(f"X={finalX}, Y={finalY}")
     return u_by_id
 
 def main():
