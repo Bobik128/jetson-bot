@@ -167,11 +167,45 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
 def clamp01(v):
     return max(0, min(1, v))
 
+def clamp(v):
+    return max(-1, min(1, v))
+
+def sdf_zone(x, y, cx, cy, r):
+    dx = x - cx
+    dy = y - cy
+
+    qx = max(dx, 0)
+    qy = max(dy, 0)
+
+    return math.sqrt(qx*qx + qy*qy) - r
+
+def sdf_normal(x, y, cx, cy):
+    dx = x - cx
+    dy = y - cy
+
+    qx = max(dx, 0)
+    qy = max(dy, 0)
+
+    l = math.sqrt(qx*qx + qy*qy)
+
+    if l < 1e-6:
+        return 1.0, 1.0
+
+    return qx/l, qy/l
+
 def remap_values_to_zone(u_by_id):
+
+    L1 = 11.6
+    L2 = 10.5
+    L3 = 5.2
 
     r = 6
     margin = 0.2
 
+    cx = 6
+    cy = -0.8
+
+    # --- vstupy
     a = map_range(u_by_id[2], 0, 0.25, 125, 90)
     b = map_range(u_by_id[3], 1, 0.66, 19, 90)
     c = map_range(u_by_id[4], 1, 0.47, 102, 180)
@@ -180,77 +214,53 @@ def remap_values_to_zone(u_by_id):
     b = math.radians(b)
     c = math.radians(c)
 
-    x1 = math.cos(a) * 11.6
-    y1 = math.sin(a) * 11.6
+    # --- FK
+    x1 = math.cos(a) * L1
+    y1 = math.sin(a) * L1
 
     omega = -(math.pi - a - b)
-    x2 = math.cos(omega) * 10.5
-    y2 = math.sin(omega) * 10.5
+    x2 = math.cos(omega) * L2
+    y2 = math.sin(omega) * L2
 
     fi = omega + (c - math.pi)
-    x3 = math.cos(fi) * 5.2
-    y3 = math.sin(fi) * 5.2
+
+    x3 = math.cos(fi) * L3
+    y3 = math.sin(fi) * L3
 
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-    cornerX = 6
-    cornerY = -0.8
+    # --- SDF test
+    d = sdf_zone(finalX, finalY, cx, cy, r)
 
-    if finalX > cornerX and finalY > cornerY:
-        # jsme v oblasti rohu → použij kružnici
-        vx = finalX - cornerX
-        vy = finalY - cornerY
-        dist = math.sqrt(vx*vx + vy*vy)
+    if d < 0:
+        nx, ny = sdf_normal(finalX, finalY, cx, cy)
+        push = -d + margin
 
-        if dist == 0:
-            nx, ny = 1, 1
-        else:
-            nx = vx / dist
-            ny = vy / dist
+        safeX = finalX + nx * push
+        safeY = finalY + ny * push
 
-        closestX = cornerX + nx * r
-        closestY = cornerY + ny * r
+        # ---- odečti třetí článek (c zůstává!)
+        tx = safeX - math.cos(fi) * L3
+        ty = safeY - math.sin(fi) * L3
 
-    else:
-        closestX = min(finalX, cornerX)
-        closestY = min(finalY, cornerY)
+        length = math.sqrt(tx*tx + ty*ty)
 
-    dx = finalX - closestX
-    dy = finalY - closestY
-
-    if (dx*dx + dy*dy) <= (r*r):
-
-        dist = math.sqrt(dx*dx + dy*dy)
-
-        if dist == 0:
-            safeX = 6 + r + margin
-            safeY = -0.8 + r + margin
-        else:
-            scale = (r + margin) / dist
-            safeX = closestX + dx * scale
-            safeY = closestY + dy * scale
-
-        print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
-
-        length = math.sqrt((safeX-x3)**2 + (safeY-y3)**2)
-
-        if length < 1e-6:
+        if length > L1 + L2 or length < abs(L1 - L2):
             return u_by_id
 
-        def clamp(v):
-            return max(-1, min(1, v))
+        beta = math.acos(clamp((L1*L1 + L2*L2 - length*length)/(2*L1*L2)))
+        alpha2 = math.acos(clamp((length*length + L1*L1 - L2*L2)/(2*length*L1)))
 
-        alpha2 = math.acos(clamp((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6)))
-        beta = math.acos(clamp((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6)))
+        base = math.atan2(ty, tx)
 
-        alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
+        a = base + alpha2
+        b = math.pi - beta
 
-        u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
-        u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
-        return u_by_id
+        # --- zpět do 0..1
+        u_by_id[2] = clamp01(map_range(math.degrees(a), 125, 90, 0, 0.25))
+        u_by_id[3] = clamp01(map_range(math.degrees(b), 19, 90, 1, 0.66))
 
-    print(f"X={finalX}, Y={finalY}")
     return u_by_id
 
 def main():
