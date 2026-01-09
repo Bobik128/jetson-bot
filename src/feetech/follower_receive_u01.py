@@ -211,7 +211,7 @@ def remap_values_to_zone(u_by_id):
 
         print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
 
-        length = math.sqrt(math.pow(safeX-x3) + math.pow(safeY-y3))
+        length = math.sqrt(math.pow(safeX-x3, 2) + math.pow(safeY-y3, 2))
         alpha2 = math.acos((length*length + 11.6*11.6 - 10.5*10.5)/2*length*11.6)
         beta = math.acos((10.5*10.5 + 11.6*11.6 - length*length)/2*10.5*11.6)
         alpha = math.tan((safeY-y3)/(safeX-x3)) + alpha2
