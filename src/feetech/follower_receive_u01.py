@@ -176,7 +176,7 @@ def remap_values_to_zone(u_by_id):
     margin = 0.01
 
     # Forbidden quadrant boundary: x <= bx AND y <= by
-    bx = 7.2
+    bx = 4.2
     by = -0.8
 
     # ================= MAP INPUT =================
