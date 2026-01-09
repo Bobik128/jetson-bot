@@ -168,18 +168,26 @@ def clamp01(v):
     return max(0, min(1, v))
 
 def remap_values_to_zone(u_by_id):
+    import math
 
-    r = 6
+    # --- Parameters ---
+    r = 6.0
     margin = 0.2
 
-    a = map_range(u_by_id[2], 0, 0.25, 125, 90)
-    b = map_range(u_by_id[3], 1, 0.66, 19, 90)
-    c = map_range(u_by_id[4], 1, 0.47, 102, 180)
+    # Forbidden quadrant boundary: x <= bx AND y <= by
+    bx = 6.2
+    by = -0.8
 
-    a = math.radians(a)
-    b = math.radians(b)
-    c = math.radians(c)
+    # --- Map u -> joint angles (deg) using your existing mappings ---
+    a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
+    b_deg = map_range(u_by_id[3], 1, 0.66, 19, 90)
+    c_deg = map_range(u_by_id[4], 1, 0.47, 102, 180)
 
+    a = math.radians(a_deg)
+    b = math.radians(b_deg)
+    c = math.radians(c_deg)
+
+    # --- Forward kinematics (exactly your model) ---
     x1 = math.cos(a) * 11.6
     y1 = math.sin(a) * 11.6
 
@@ -194,64 +202,63 @@ def remap_values_to_zone(u_by_id):
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-        # Forbidden quadrant boundary: x <= bx, y <= by
-    bx = 6.2
-    by = -0.8
-
-    # Distance to forbidden quadrant (0 if inside it)
-    vx = max(finalX - bx, 0.0)   # only positive if you're to the right of the vertical boundary
-    vy = max(finalY - by, 0.0)   # only positive if you're above the horizontal boundary
+    # --- Filleted distance to forbidden quadrant (SDF style) ---
+    # Distance to the set {x <= bx, y <= by}:
+    #   vx = max(x - bx, 0), vy = max(y - by, 0), dist = hypot(vx, vy)
+    vx = max(finalX - bx, 0.0)
+    vy = max(finalY - by, 0.0)
     dist = math.hypot(vx, vy)
 
     print(f"X={finalX}, Y={finalY}, dist_to_forbidden={dist}")
 
-    if dist <= r:
-        if dist > 1e-9:
-            # Outside at least one boundary: outward normal comes from (vx, vy)
-            nx = vx / dist
-            ny = vy / dist
-        else:
-            # Inside the forbidden quadrant: use a stable direction away from the corner
-            dx_corner = finalX - bx
-            dy_corner = finalY - by
-
-            # We want to move toward +x,+y; inside the quadrant dx_corner<=0, dy_corner<=0
-            ax = -dx_corner
-            ay = -dy_corner
-            alen = math.hypot(ax, ay)
-
-            if alen > 1e-9:
-                nx = ax / alen
-                ny = ay / alen
-            else:
-                # Exactly at the corner
-                nx = ny = 1.0 / math.sqrt(2.0)
-
-        # Push to the filleted boundary at radius r+margin
-        target = r + margin
-        push = target - dist  # when dist==0 (inside), push==target; when near boundary, small push
-        safeX = finalX + nx * push
-        safeY = finalY + ny * push
-
-        print(f"  -> safeX={safeX}, safeY={safeY}, push={push}, n=({nx},{ny})")
-
-        # ... keep your IK below unchanged ...
-        length = math.sqrt((safeX-x3)**2 + (safeY-y3)**2)
-        if length < 1e-6:
-            return u_by_id
-
-        def clamp(v):
-            return max(-1, min(1, v))
-
-        alpha2 = math.acos(clamp((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6)))
-        beta = math.acos(clamp((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6)))
-
-        alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
-
-        u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
-        u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+    # Outside keep-out band -> no remap
+    if dist > r:
         return u_by_id
 
+    # --- Compute continuous outward normal ---
+    if dist > 1e-9:
+        # Normal points away from the forbidden set and changes smoothly near the corner
+        nx = vx / dist
+        ny = vy / dist
+    else:
+        # Inside the forbidden quadrant: choose a stable direction away from the corner
+        # Use the vector from the point toward (+x,+y) away from the corner:
+        ax = -(finalX - bx)
+        ay = -(finalY - by)
+        alen = math.hypot(ax, ay)
+        if alen > 1e-9:
+            nx = ax / alen
+            ny = ay / alen
+        else:
+            nx = ny = 1.0 / math.sqrt(2.0)
+
+    # --- Push to the filleted boundary at radius (r + margin) ---
+    target = r + margin
+    push = target - dist
+    safeX = finalX + nx * push
+    safeY = finalY + ny * push
+
+    print(f"  -> safeX={safeX}, safeY={safeY}, push={push}, n=({nx},{ny})")
+
+    # --- Your original IK (kept) ---
+    length = math.sqrt((safeX - x3) ** 2 + (safeY - y3) ** 2)
+    if length < 1e-6:
+        return u_by_id
+
+    def clamp(v):
+        return max(-1.0, min(1.0, v))
+
+    alpha2 = math.acos(
+        clamp((length * length + 11.6 * 11.6 - 10.5 * 10.5) / (2.0 * length * 11.6))
+    )
+    beta = math.acos(
+        clamp((10.5 * 10.5 + 11.6 * 11.6 - length * length) / (2.0 * 10.5 * 11.6))
+    )
+
+    alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
+
+    u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+    u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
     return u_by_id
 
 def main():
