@@ -194,8 +194,27 @@ def remap_values_to_zone(u_by_id):
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-    closestX = min(finalX, 6)
-    closestY = min(finalY, -0.8)
+    cornerX = 6
+    cornerY = -0.8
+
+    if finalX > cornerX and finalY > cornerY:
+        # jsme v oblasti rohu → použij kružnici
+        vx = finalX - cornerX
+        vy = finalY - cornerY
+        dist = math.sqrt(vx*vx + vy*vy)
+
+        if dist == 0:
+            nx, ny = 1, 1
+        else:
+            nx = vx / dist
+            ny = vy / dist
+
+        closestX = cornerX + nx * r
+        closestY = cornerY + ny * r
+
+    else:
+        closestX = min(finalX, cornerX)
+        closestY = min(finalY, cornerY)
 
     dx = finalX - closestX
     dy = finalY - closestY
