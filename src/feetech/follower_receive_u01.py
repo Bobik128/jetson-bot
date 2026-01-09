@@ -209,9 +209,9 @@ def remap_values_to_zone(u_by_id):
             safeX = closestX + dx * scale
             safeY = closestY + dy * scale
 
-        return safeX, safeY, True   # True = byla kolize
+        print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
 
-    return finalX, finalY, False
+    print(f"X={finalX}, Y={finalY}")
 
 def main():
     ap = argparse.ArgumentParser()
