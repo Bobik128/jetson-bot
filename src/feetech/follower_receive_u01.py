@@ -175,7 +175,7 @@ def remap_values_to_zone(u_by_id):
     margin = 0.2
 
     # Forbidden quadrant boundary: x <= bx AND y <= by
-    bx = 6.2
+    bx = 7.2
     by = -0.8
 
     # --- Map u -> joint angles (deg) using your existing mappings ---
