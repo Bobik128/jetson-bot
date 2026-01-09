@@ -330,8 +330,6 @@ def main():
 
             print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}")
 
-            u_by_id = remap_values_to_zone(u_by_id)
-
             goals: Dict[int, int] = {}
             for mid, u in u_by_id.items():
                 lo, hi = map_limits[mid]
