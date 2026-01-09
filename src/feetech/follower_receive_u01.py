@@ -145,7 +145,7 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
 
     omega = math.pi - a - b
     x2 = math.cos(omega) * 10.5
-    y2 = math.sin(omega) * 10.5
+    y2 = -math.sin(omega) * 10.5
 
     fi = omega + (c - math.pi)
     x3 = math.cos(fi) * 5.7
