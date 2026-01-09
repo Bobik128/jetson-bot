@@ -164,6 +164,9 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
 
     return (dx * dx + dy * dy) <= (r * r)
 
+def clamp01(v):
+    return max(0, min(1, v))
+
 def remap_values_to_zone(u_by_id):
 
     r = 6
@@ -224,8 +227,8 @@ def remap_values_to_zone(u_by_id):
 
         alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
 
-        u_by_id[2] = map_range(math.degrees(alpha), 125, 90, 0, 0.25)
-        u_by_id[3] = map_range(math.degrees(beta), 19, 90, 1, 0.66)
+        u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+        u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
         return u_by_id
 
     print(f"X={finalX}, Y={finalY}")
