@@ -188,14 +188,14 @@ def remap_values_to_zone(u_by_id):
     y2 = math.sin(omega) * 10.5
 
     fi = omega + (c - math.pi)
-    x3 = math.cos(fi) * 5.2
-    y3 = math.sin(fi) * 5.2
+    x3 = math.cos(fi) * 5.7
+    y3 = math.sin(fi) * 5.7
 
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
         # Forbidden quadrant boundary: x <= bx, y <= by
-    bx = 6.0
+    bx = 6.2
     by = -0.8
 
     # Distance to forbidden quadrant (0 if inside it)
