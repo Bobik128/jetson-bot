@@ -211,11 +211,18 @@ def remap_values_to_zone(u_by_id):
 
         print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
 
-        length = math.sqrt(math.pow(safeX-x3, 2) + math.pow(safeY-y3, 2))
-        alpha2 = math.acos((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6))
-        beta = math.acos((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6))
-        alpha = math.tan((safeY-y3)/(safeX-x3)) + alpha2
+        length = math.sqrt((safeX-x3)**2 + (safeY-y3)**2)
 
+        if length < 1e-6:
+            return u_by_id
+
+        def clamp(v):
+            return max(-1, min(1, v))
+
+        alpha2 = math.acos(clamp((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6)))
+        beta = math.acos(clamp((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6)))
+
+        alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
 
         u_by_id[2] = map_range(math.degrees(alpha), 125, 90, 0, 0.25)
         u_by_id[3] = map_range(math.degrees(beta), 19, 90, 1, 0.66)
