@@ -168,147 +168,89 @@ def clamp01(v):
     return max(0, min(1, v))
 
 def remap_values_to_zone(u_by_id):
-    """
-    Keeps the end-effector (finalX, finalY) outside the forbidden quadrant expanded by radius r,
-    with a filleted corner (quarter-circle) of radius r, plus an additional 'margin'.
 
-    Forbidden region (the robot body corner):
-        x <= bx  AND  y <= by
-
-    Approach:
-      1) Forward-kinematics from (u2,u3,u4) -> end effector (finalX, finalY)
-      2) Compute distance to forbidden quadrant via SDF components (vx, vy)
-      3) If within radius r: push outward to radius (r+margin) with a continuous normal
-      4) Solve planar 2-link IK to move shoulder+elbow to the new wrist-center target while
-         holding wrist orientation (fi) fixed (as implied by u4 mapping).
-      5) Map solved angles back to u2/u3 using inverse of the existing map_range usage.
-
-    Notes:
-      - This assumes link lengths and your kinematic conventions match the original code.
-      - This holds the wrist orientation fi fixed (so u4 is unchanged here).
-    """
-
-    # --- Tunables ---
-    r = 6.0
+    r = 6
     margin = 0.2
 
-    # Forbidden quadrant boundary: x <= bx, y <= by
-    bx = 6.0
-    by = -0.8
+    a = map_range(u_by_id[2], 0, 0.25, 125, 90)
+    b = map_range(u_by_id[3], 1, 0.66, 19, 90)
+    c = map_range(u_by_id[4], 1, 0.47, 102, 180)
 
-    # Link lengths (same constants you used)
-    L1 = 11.6
-    L2 = 10.5
-    L3 = 5.2
+    a = math.radians(a)
+    b = math.radians(b)
+    c = math.radians(c)
 
-    # --- Helpers ---
-    def clamp01(v):
-        return 0.0 if v < 0.0 else 1.0 if v > 1.0 else v
+    x1 = math.cos(a) * 11.6
+    y1 = math.sin(a) * 11.6
 
-    def clamp(v, lo, hi):
-        return lo if v < lo else hi if v > hi else v
-
-    # --- Map u -> angles (degrees as in your original code) ---
-    a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
-    b_deg = map_range(u_by_id[3], 1, 0.66, 19, 90)
-    c_deg = map_range(u_by_id[4], 1, 0.47, 102, 180)
-
-    a = math.radians(a_deg)
-    b = math.radians(b_deg)
-    c = math.radians(c_deg)
-
-    # --- Forward kinematics (same as your original) ---
-    x1 = math.cos(a) * L1
-    y1 = math.sin(a) * L1
-
-    omega = -(math.pi - a - b)        # == a + b - pi
-    x2 = math.cos(omega) * L2
-    y2 = math.sin(omega) * L2
+    omega = -(math.pi - a - b)
+    x2 = math.cos(omega) * 10.5
+    y2 = math.sin(omega) * 10.5
 
     fi = omega + (c - math.pi)
-    x3 = math.cos(fi) * L3
-    y3 = math.sin(fi) * L3
+    x3 = math.cos(fi) * 5.2
+    y3 = math.sin(fi) * 5.2
 
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-    # --- Distance to forbidden quadrant (fillet implied) ---
-    vx = max(finalX - bx, 0.0)
-    vy = max(finalY - by, 0.0)
+        # Forbidden quadrant boundary: x <= bx, y <= by
+    bx = 6.0
+    by = -0.8
+
+    # Distance to forbidden quadrant (0 if inside it)
+    vx = max(finalX - bx, 0.0)   # only positive if you're to the right of the vertical boundary
+    vy = max(finalY - by, 0.0)   # only positive if you're above the horizontal boundary
     dist = math.hypot(vx, vy)
 
-    # Diagnostics (leave or remove)
     print(f"X={finalX}, Y={finalY}, dist_to_forbidden={dist}")
 
-    # If not in the keep-out band, do nothing
-    if dist > r:
-        return u_by_id
-
-    # --- Compute continuous outward normal ---
-    if dist > 1e-9:
-        # Outside at least one boundary: normal from SDF components
-        nx = vx / dist
-        ny = vy / dist
-    else:
-        # Inside forbidden quadrant: move away from the corner along a stable direction
-        dx_corner = finalX - bx
-        dy_corner = finalY - by
-        ax = -dx_corner
-        ay = -dy_corner
-        alen = math.hypot(ax, ay)
-        if alen > 1e-9:
-            nx = ax / alen
-            ny = ay / alen
+    if dist <= r:
+        if dist > 1e-9:
+            # Outside at least one boundary: outward normal comes from (vx, vy)
+            nx = vx / dist
+            ny = vy / dist
         else:
-            nx = ny = 1.0 / math.sqrt(2.0)
+            # Inside the forbidden quadrant: use a stable direction away from the corner
+            dx_corner = finalX - bx
+            dy_corner = finalY - by
 
-    # --- Push to the offset boundary radius (r + margin) ---
-    target = r + margin
-    push = target - dist
-    safeX = finalX + nx * push
-    safeY = finalY + ny * push
+            # We want to move toward +x,+y; inside the quadrant dx_corner<=0, dy_corner<=0
+            ax = -dx_corner
+            ay = -dy_corner
+            alen = math.hypot(ax, ay)
 
-    print(f"  -> safeX={safeX}, safeY={safeY}, push={push}, n=({nx},{ny})")
+            if alen > 1e-9:
+                nx = ax / alen
+                ny = ay / alen
+            else:
+                # Exactly at the corner
+                nx = ny = 1.0 / math.sqrt(2.0)
 
-    # --- IK: hold wrist orientation fi fixed, solve for shoulder+elbow to reach wrist center ---
-    ux = math.cos(fi)
-    uy = math.sin(fi)
+        # Push to the filleted boundary at radius r+margin
+        target = r + margin
+        push = target - dist  # when dist==0 (inside), push==target; when near boundary, small push
+        safeX = finalX + nx * push
+        safeY = finalY + ny * push
 
-    # Desired wrist center (where L1+L2 must reach)
-    wx = safeX - L3 * ux
-    wy = safeY - L3 * uy
+        print(f"  -> safeX={safeX}, safeY={safeY}, push={push}, n=({nx},{ny})")
 
-    d = math.hypot(wx, wy)
+        # ... keep your IK below unchanged ...
+        length = math.sqrt((safeX-x3)**2 + (safeY-y3)**2)
+        if length < 1e-6:
+            return u_by_id
 
-    # Clamp to reachable annulus for numeric stability
-    d = max(1e-9, min(L1 + L2 - 1e-6, d))
+        def clamp(v):
+            return max(-1, min(1, v))
 
-    # 2-link IK
-    cos_t2 = (d * d - L1 * L1 - L2 * L2) / (2.0 * L1 * L2)
-    cos_t2 = clamp(cos_t2, -1.0, 1.0)
+        alpha2 = math.acos(clamp((length*length + 11.6*11.6 - 10.5*10.5)/(2*length*11.6)))
+        beta = math.acos(clamp((10.5*10.5 + 11.6*11.6 - length*length)/(2*10.5*11.6)))
 
-    # Branch choice:
-    #   +acos : one elbow configuration; -acos : the other.
-    # Keep +acos for determinism; if you want the other posture, negate theta2.
-    theta2 = math.acos(cos_t2)
+        alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
 
-    k1 = L1 + L2 * math.cos(theta2)
-    k2 = L2 * math.sin(theta2)
-    theta1 = math.atan2(wy, wx) - math.atan2(k2, k1)
-
-    # Convert back to your conventions:
-    # Your model: omega = a + b - pi
-    # Standard 2-link: link2 absolute angle = theta1 + theta2 = omega_new
-    a_new = theta1
-    omega_new = theta1 + theta2
-    b_new = omega_new - a_new + math.pi  # ensures omega_new == a_new + b_new - pi
-
-    # Map solved angles back to u (inverse of your map_range usage)
-    a_new_deg = math.degrees(a_new)
-    b_new_deg = math.degrees(b_new)
-
-    u_by_id[2] = clamp01(map_range(a_new_deg, 125, 90, 0, 0.25))
-    u_by_id[3] = clamp01(map_range(b_new_deg, 19, 90, 1, 0.66))
+        u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+        u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+        return u_by_id
 
     return u_by_id
 
