@@ -171,7 +171,7 @@ def remap_values_to_zone(u_by_id):
     import math
 
     # ================= PARAMETERS =================
-    fillet_r = 3.0      # radius of rounded corner geometry
+    fillet_r = 2.0      # radius of rounded corner geometry
     keepout_r = 5.0     # repulsion band thickness
     margin = 0.01
 
