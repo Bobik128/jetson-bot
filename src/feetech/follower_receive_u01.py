@@ -164,6 +164,55 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
 
     return (dx * dx + dy * dy) <= (r * r)
 
+def remap_values_to_zone(u_by_id):
+
+    r = 6
+    margin = 0.2
+
+    a = map_range(u_by_id[2], 0, 0.25, 125, 90)
+    b = map_range(u_by_id[3], 1, 0.66, 19, 90)
+    c = map_range(u_by_id[4], 1, 0.47, 102, 180)
+
+    x1 = math.cos(a) * 11.6
+    y1 = math.sin(a) * 11.6
+
+    omega = -(math.pi - a - b)
+    x2 = math.cos(omega) * 10.5
+    y2 = math.sin(omega) * 10.5
+
+    fi = omega + (c - math.pi)
+    x3 = math.cos(fi) * 5.2
+    y3 = math.sin(fi) * 5.2
+
+    finalX = x1 + x2 + x3
+    finalY = y1 + y2 + y3
+
+    closestX = min(finalX, 6)
+    closestY = min(finalY, -0.8)
+
+    dx = finalX - closestX
+    dy = finalY - closestY
+
+    if (dx * dx + dy * dy) <= (r * r):
+        # is in not allowed range
+
+        dist = math.sqrt(dx*dx + dy*dy)
+
+        if dist == 0:
+            # jsme přesně v rohu zóny
+            return 6 + r + margin, 1 + r + margin
+
+        scale = (r + margin) / dist
+
+        safeX = closestX + dx * scale
+        safeY = closestY + dy * scale
+
+        print(f"posX={finalX}, posY={finalY}, safeX={safeX}, safeY={safeY}")
+    else:
+        print(f"posX={finalX}, posY={finalY}")
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
@@ -275,9 +324,13 @@ def main():
             elbow_flex_rad = map_range(u_by_id[3], 1, 0.66, 19, 90)
             wrist_flex_rad = map_range(u_by_id[4], 1, 0.47, 102, 180)
 
-            touchung: bool = is_touching_danger_zone(math.radians(shoulder_lift_rad), math.radians(elbow_flex_rad), math.radians(wrist_flex_rad), 6)
+            # touchung: bool = is_touching_danger_zone(math.radians(shoulder_lift_rad), math.radians(elbow_flex_rad), math.radians(wrist_flex_rad), 6)
 
-            print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}, touching={touchung}")
+            remap_values_to_zone(u_by_id)
+
+            print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}")
+
+            u_by_id = remap_values_to_zone(u_by_id)
 
             goals: Dict[int, int] = {}
             for mid, u in u_by_id.items():
