@@ -210,9 +210,19 @@ def remap_values_to_zone(u_by_id):
             safeY = closestY + dy * scale
 
         print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
-        return
+
+        length = math.sqrt(math.pow(safeX-x3) + math.pow(safeY-y3))
+        alpha2 = math.acos((length*length + 11.6*11.6 - 10.5*10.5)/2*length*11.6)
+        beta = math.acos((10.5*10.5 + 11.6*11.6 - length*length)/2*10.5*11.6)
+        alpha = math.tan((safeY-y3)/(safeX-x3)) + alpha2
+
+
+        u_by_id[2] = map_range(math.degrees(alpha), 125, 90, 0, 0.25)
+        u_by_id[3] = map_range(math.degrees(beta), 19, 90, 1, 0.66)
+        return u_by_id
 
     print(f"X={finalX}, Y={finalY}")
+    return u_by_id
 
 def main():
     ap = argparse.ArgumentParser()
@@ -327,7 +337,7 @@ def main():
 
             # touchung: bool = is_touching_danger_zone(math.radians(shoulder_lift_rad), math.radians(elbow_flex_rad), math.radians(wrist_flex_rad), 6)
 
-            remap_values_to_zone(u_by_id)
+            u_by_id = remap_values_to_zone(u_by_id)
 
             print(f"shoulder={shoulder_lift_rad}, elbow={elbow_flex_rad}, wrist={wrist_flex_rad}")
 
