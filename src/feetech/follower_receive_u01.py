@@ -210,6 +210,7 @@ def remap_values_to_zone(u_by_id):
             safeY = closestY + dy * scale
 
         print(f"X={finalX}, Y={finalY}, safeX={safeX}, safeY={safeY}")
+        return
 
     print(f"X={finalX}, Y={finalY}")
 
