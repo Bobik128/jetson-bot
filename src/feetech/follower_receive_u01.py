@@ -160,6 +160,8 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
     dx = finalX - closestX
     dy = finalY - closestY
 
+    print(f"posX={finalX}, posY={finalY}")
+
     return (dx * dx + dy * dy) <= (r * r)
 
 def main():
