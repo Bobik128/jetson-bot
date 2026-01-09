@@ -173,6 +173,10 @@ def remap_values_to_zone(u_by_id):
     b = map_range(u_by_id[3], 1, 0.66, 19, 90)
     c = map_range(u_by_id[4], 1, 0.47, 102, 180)
 
+    a = math.radians(a)
+    b = math.radians(b)
+    c = math.radians(c)
+
     x1 = math.cos(a) * 11.6
     y1 = math.sin(a) * 11.6
 
@@ -193,25 +197,21 @@ def remap_values_to_zone(u_by_id):
     dx = finalX - closestX
     dy = finalY - closestY
 
-    if (dx * dx + dy * dy) <= (r * r):
-        # is in not allowed range
+    if (dx*dx + dy*dy) <= (r*r):
 
         dist = math.sqrt(dx*dx + dy*dy)
 
         if dist == 0:
-            # jsme přesně v rohu zóny
-            return 6 + r + margin, 1 + r + margin
+            safeX = 6 + r + margin
+            safeY = -0.8 + r + margin
+        else:
+            scale = (r + margin) / dist
+            safeX = closestX + dx * scale
+            safeY = closestY + dy * scale
 
-        scale = (r + margin) / dist
+        return safeX, safeY, True   # True = byla kolize
 
-        safeX = closestX + dx * scale
-        safeY = closestY + dy * scale
-
-        print(f"posX={finalX}, posY={finalY}, safeX={safeX}, safeY={safeY}")
-    else:
-        print(f"posX={finalX}, posY={finalY}")
-
-
+    return finalX, finalY, False
 
 def main():
     ap = argparse.ArgumentParser()
