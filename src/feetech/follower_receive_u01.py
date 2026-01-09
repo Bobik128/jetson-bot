@@ -176,8 +176,8 @@ def remap_values_to_zone(u_by_id):
     margin = 0.01
 
     # Forbidden quadrant boundary: x <= bx AND y <= by
-    bx = 4.2
-    by = -0.8
+    bx = 3.2
+    by = -1.2
 
     # ================= MAP INPUT =================
     a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
@@ -197,8 +197,8 @@ def remap_values_to_zone(u_by_id):
     y2 = math.sin(omega) * 10.5
 
     fi = omega + (c - math.pi)
-    x3 = math.cos(fi) * 7.5
-    y3 = math.sin(fi) * 7.5
+    x3 = math.cos(fi) * 6.5
+    y3 = math.sin(fi) * 6.5
 
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
