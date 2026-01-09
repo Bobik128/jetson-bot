@@ -155,7 +155,7 @@ def is_touching_danger_zone(a, b, c, r) -> bool:
     finalY = y1 + y2 + y3
 
     closestX = min(finalX, 6)
-    closestY = min(finalY, 1)
+    closestY = min(finalY, -0.8)
 
     dx = finalX - closestX
     dy = finalY - closestY
