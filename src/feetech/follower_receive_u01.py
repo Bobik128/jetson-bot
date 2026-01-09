@@ -170,15 +170,16 @@ def clamp01(v):
 def remap_values_to_zone(u_by_id):
     import math
 
-    # --- Parameters ---
-    r = 4.0
+    # ================= PARAMETERS =================
+    fillet_r = 6.0      # radius of rounded corner geometry
+    keepout_r = 4.0     # repulsion band thickness
     margin = 0.2
 
     # Forbidden quadrant boundary: x <= bx AND y <= by
     bx = 7.2
     by = -0.8
 
-    # --- Map u -> joint angles (deg) using your existing mappings ---
+    # ================= MAP INPUT =================
     a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
     b_deg = map_range(u_by_id[3], 1, 0.66, 19, 90)
     c_deg = map_range(u_by_id[4], 1, 0.47, 102, 180)
@@ -187,7 +188,7 @@ def remap_values_to_zone(u_by_id):
     b = math.radians(b_deg)
     c = math.radians(c_deg)
 
-    # --- Forward kinematics (exactly your model) ---
+    # ================= FORWARD KINEMATICS =================
     x1 = math.cos(a) * 11.6
     y1 = math.sin(a) * 11.6
 
@@ -202,46 +203,37 @@ def remap_values_to_zone(u_by_id):
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
-    # --- Filleted distance to forbidden quadrant (SDF style) ---
-    # Distance to the set {x <= bx, y <= by}:
-    #   vx = max(x - bx, 0), vy = max(y - by, 0), dist = hypot(vx, vy)
+    # ================= ROUNDED SDF =================
     vx = max(finalX - bx, 0.0)
     vy = max(finalY - by, 0.0)
-    dist = math.hypot(vx, vy)
 
-    print(f"X={finalX}, Y={finalY}, dist_to_forbidden={dist}")
+    dist_raw = math.hypot(vx, vy)
+    dist = dist_raw - fillet_r
 
-    # Outside keep-out band -> no remap
-    if dist > r:
+    print(f"X={finalX:.3f}, Y={finalY:.3f}, sdf={dist:.3f}")
+
+    # ================= OUTSIDE KEEP-OUT =================
+    if dist > keepout_r:
         return u_by_id
 
-    # --- Compute continuous outward normal ---
-    if dist > 1e-9:
-        # Normal points away from the forbidden set and changes smoothly near the corner
-        nx = vx / dist
-        ny = vy / dist
+    # ================= NORMAL =================
+    if dist_raw > 1e-9:
+        nx = vx / dist_raw
+        ny = vy / dist_raw
     else:
-        # Inside the forbidden quadrant: choose a stable direction away from the corner
-        # Use the vector from the point toward (+x,+y) away from the corner:
-        ax = -(finalX - bx)
-        ay = -(finalY - by)
-        alen = math.hypot(ax, ay)
-        if alen > 1e-9:
-            nx = ax / alen
-            ny = ay / alen
-        else:
-            nx = ny = 1.0 / math.sqrt(2.0)
+        # inside sharp corner core
+        nx = ny = 1.0 / math.sqrt(2.0)
 
-    # --- Push to the filleted boundary at radius (r + margin) ---
-    target = r + margin
+    # ================= PUSH =================
+    target = keepout_r + margin
     push = target - dist
     safeX = finalX + nx * push
     safeY = finalY + ny * push
 
-    print(f"  -> safeX={safeX}, safeY={safeY}, push={push}, n=({nx},{ny})")
+    print(f"  -> safeX={safeX:.3f}, safeY={safeY:.3f}, push={push:.3f}")
 
-    # --- Your original IK (kept) ---
-    length = math.sqrt((safeX - x3) ** 2 + (safeY - y3) ** 2)
+    # ================= IK =================
+    length = math.hypot(safeX - x3, safeY - y3)
     if length < 1e-6:
         return u_by_id
 
@@ -251,6 +243,7 @@ def remap_values_to_zone(u_by_id):
     alpha2 = math.acos(
         clamp((length * length + 11.6 * 11.6 - 10.5 * 10.5) / (2.0 * length * 11.6))
     )
+
     beta = math.acos(
         clamp((10.5 * 10.5 + 11.6 * 11.6 - length * length) / (2.0 * 10.5 * 11.6))
     )
@@ -259,6 +252,7 @@ def remap_values_to_zone(u_by_id):
 
     u_by_id[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
     u_by_id[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+
     return u_by_id
 
 def main():
