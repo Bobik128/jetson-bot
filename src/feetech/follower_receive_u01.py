@@ -171,9 +171,9 @@ def remap_values_to_zone(u_by_id):
     import math
 
     # ================= PARAMETERS =================
-    fillet_r = 6.0      # radius of rounded corner geometry
-    keepout_r = 4.0     # repulsion band thickness
-    margin = 0.2
+    fillet_r = 3.0      # radius of rounded corner geometry
+    keepout_r = 5.0     # repulsion band thickness
+    margin = 0.01
 
     # Forbidden quadrant boundary: x <= bx AND y <= by
     bx = 7.2
@@ -197,8 +197,8 @@ def remap_values_to_zone(u_by_id):
     y2 = math.sin(omega) * 10.5
 
     fi = omega + (c - math.pi)
-    x3 = math.cos(fi) * 6.5
-    y3 = math.sin(fi) * 6.5
+    x3 = math.cos(fi) * 7.5
+    y3 = math.sin(fi) * 7.5
 
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
