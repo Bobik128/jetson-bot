@@ -1,4 +1,4 @@
-/usr/bin/python3 ./../src/collect_demos.py \
+/usr/bin/python3 ./../src/collect_demos_unified.py \
   --preview --preview-height 540 --preview-width 920 \
   --disable-side-cam \
   --arm-enable \
@@ -8,6 +8,6 @@
   --follower_calib ./../data/calibrations/hand_calibration.json \
   --soft_margin 0.0 \
   --arm-hz 120 \
-  --max_step 100 \
+  --max_step 300 \
   --invert 6 \
-  --disable-side-cam
+  --arm-drain

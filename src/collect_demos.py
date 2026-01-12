@@ -7,12 +7,11 @@ import argparse
 import socket
 import numpy as np
 import sys
-import math
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pygame
-
 import scservo_sdk as scs
 
 from gst_cam import GstCam
@@ -76,7 +75,6 @@ def init_gamepad():
 def read_gamepad_axes(js):
     lx = js.get_axis(1)  # left stick vertical
     rx = js.get_axis(2)  # right stick horizontal
-
     lx = -lx
 
     lx = apply_deadzone(lx, DEADZONE)
@@ -95,9 +93,104 @@ def read_gamepad_axes(js):
 
     return lx, rx, turbo_val
 
+def map_range(x, in_min, in_max, out_min, out_max):
+    if in_max == in_min:
+        raise ValueError("in_min and in_max must be different")
+    return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
+
+def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) -> Dict[int, float]:
+    """
+    Keep-out/collision-avoidance remap (your function) integrated.
+    Expects u_by_id to contain at least ids 2,3,4. Other ids pass through unchanged.
+    """
+    import math
+
+    if 2 not in u_by_id or 3 not in u_by_id or 4 not in u_by_id:
+        return u_by_id
+
+    # ================= PARAMETERS =================
+    fillet_r = 2.0      # radius of rounded corner geometry
+    keepout_r = 5.0     # repulsion band thickness
+    margin = 0.01
+
+    # Forbidden quadrant boundary: x <= bx AND y <= by
+    bx = 4.6
+    by = -0.6
+
+    # ================= MAP INPUT =================
+    a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
+    b_deg = map_range(u_by_id[3], 1, 0.66, 19, 90)
+    c_deg = map_range(u_by_id[4], 1, 0.47, 102, 180)
+
+    a = math.radians(a_deg)
+    b = math.radians(b_deg)
+    c = math.radians(c_deg)
+
+    # ================= FORWARD KINEMATICS =================
+    x1 = math.cos(a) * 11.6
+    y1 = math.sin(a) * 11.6
+
+    omega = -(math.pi - a - b)
+    x2 = math.cos(omega) * 10.5
+    y2 = math.sin(omega) * 10.5
+
+    fi = omega + (c - math.pi)
+    x3 = math.cos(fi) * 5.5
+    y3 = math.sin(fi) * 5.5
+
+    finalX = x1 + x2 + x3
+    finalY = y1 + y2 + y3
+
+    # ================= ROUNDED SDF =================
+    vx = max(finalX - bx, 0.0)
+    vy = max(finalY - by, 0.0)
+
+    dist_raw = math.hypot(vx, vy)
+    dist = dist_raw - fillet_r
+
+    if verbose:
+        print(f"[keepout] X={finalX:.3f}, Y={finalY:.3f}, sdf={dist:.3f}")
+
+    # ================= OUTSIDE KEEP-OUT =================
+    if dist > keepout_r:
+        return u_by_id
+
+    # ================= NORMAL =================
+    if dist_raw > 1e-9:
+        nx = vx / dist_raw
+        ny = vy / dist_raw
+    else:
+        nx = ny = 1.0 / math.sqrt(2.0)
+
+    # ================= PUSH =================
+    target = keepout_r + margin
+    push = target - dist
+    safeX = finalX + nx * push
+    safeY = finalY + ny * push
+
+    if verbose:
+        print(f"[keepout] -> safeX={safeX:.3f}, safeY={safeY:.3f}, push={push:.3f}")
+
+    # ================= IK =================
+    length = math.hypot(safeX - x3, safeY - y3)
+    if length < 1e-6:
+        return u_by_id
+
+    def _clamp(v):
+        return max(-1.0, min(1.0, v))
+
+    alpha2 = math.acos(_clamp((length * length + 11.6 * 11.6 - 10.5 * 10.5) / (2.0 * length * 11.6)))
+    beta = math.acos(_clamp((10.5 * 10.5 + 11.6 * 11.6 - length * length) / (2.0 * 10.5 * 11.6)))
+    alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
+
+    out = dict(u_by_id)
+    out[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+    out[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+    return out
+
 
 ########################################
-# Arm follower (integrated)
+# Arm follower (threaded, integrated)
 ########################################
 
 CTRL_TABLE = {
@@ -218,13 +311,15 @@ def load_calib_ranges(path: str) -> Dict[int, Tuple[int, int]]:
 
 class ArmFollowerU01:
     """
-    Integrated follower:
-      - Receives u01 packets from leader on UDP
-      - Converts u -> servo ticks using calibration ranges
-      - Applies EEPROM safety clamp + optional soft margin + rate limiting
-      - Writes Goal_Position
+    Threaded follower:
+      - Receives u01 leader packets on UDP
+      - Applies keepout remap_values_to_zone()
+      - Writes servo goals at --arm-hz regardless of camera/logging load
+      - Drains UDP queue to avoid backlog lag
 
-    NOTE: This is intentionally close to your follower_receive_u01.py logic.
+    Use:
+      arm = ArmFollowerU01(...)
+      u_arm = arm.get_last_u()   # for logging
     """
 
     NAME_TO_ID = {
@@ -233,7 +328,6 @@ class ArmFollowerU01:
         "wrist_flex": 4,
         "gripper": 6,
         "servo1": 1,
-        "base": 1,
     }
 
     def __init__(
@@ -253,8 +347,10 @@ class ArmFollowerU01:
         gripper_range: Optional[Tuple[int, int]] = None,
         servo1_accel: Optional[int] = None,
         verbose: bool = False,
+        drain_all_udp: bool = True,
     ):
         self.verbose = bool(verbose)
+        self.drain_all_udp = bool(drain_all_udp)
 
         self.ids = list(ids)
         self.hz = float(hz)
@@ -270,22 +366,17 @@ class ArmFollowerU01:
                 k, v = part.strip().split(":")
                 self.TRIM[int(k)] = int(v)
 
-        # Load calibration ticks (range_min/range_max)
         calib_ranges = load_calib_ranges(follower_calib)
 
-        # Connect bus
         self.bus = Bus(port, baudrate, protocol=0)
         self.bus.connect()
 
-        # Read EEPROM safety limits and configure servos
         self.eeprom_limits: Dict[int, Tuple[int, int]] = {}
         self.map_limits: Dict[int, Tuple[int, int]] = {}
 
         for mid in self.ids:
-            # Position mode, accel, lock, torque off while reading EEPROM
             self.bus.write1(mid, CTRL_TABLE["Operating_Mode"][0], 0)
 
-            # Acceleration: allow per-servo1 override if provided
             accel_val = 254
             if servo1_accel is not None and mid == 1:
                 accel_val = int(servo1_accel)
@@ -298,23 +389,23 @@ class ArmFollowerU01:
             mx = self.bus.read2(mid, CTRL_TABLE["Max_Position_Limit"][0])
             self.eeprom_limits[mid] = (mn, mx)
 
-        # mapping limits: prefer calib, else EEPROM
         for mid in self.ids:
             self.map_limits[mid] = calib_ranges.get(mid, self.eeprom_limits[mid])
 
-        # torque ON once (keep on)
         for mid in self.ids:
             self.bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 1)
 
-        # UDP socket (non-blocking)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0", int(udp_port)))
         self.sock.settimeout(max(0.001, float(sock_timeout)))
 
-        # last u and command state
         self.last_u_by_id: Dict[int, float] = {mid: 0.5 for mid in self.ids}
         self.last_rx_t: float = 0.0
         self.q_cmd: Dict[int, Optional[int]] = {mid: None for mid in self.ids}
+
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="ArmFollowerU01", daemon=True)
 
         if self.verbose:
             print("[arm] EEPROM safety limits:")
@@ -323,9 +414,16 @@ class ArmFollowerU01:
             print("[arm] Mapping limits (from calib unless missing):")
             for mid in self.ids:
                 print(f"  ID {mid}: {self.map_limits[mid]}")
-            print(f"[arm] Listening u01 on UDP :{udp_port} @ {self.hz} Hz")
+            print(f"[arm] Listening u01 on UDP :{udp_port} @ {self.hz} Hz (threaded)")
+
+        self._thread.start()
 
     def close(self):
+        self._stop.set()
+        try:
+            self._thread.join(timeout=1.0)
+        except Exception:
+            pass
         try:
             self.sock.close()
         except Exception:
@@ -335,10 +433,11 @@ class ArmFollowerU01:
         except Exception:
             pass
 
-    def poll_udp(self) -> Optional[Dict[int, float]]:
-        """
-        Non-blocking-ish: uses short socket timeout. Returns u_by_id if packet received, else None.
-        """
+    def get_last_u(self) -> Dict[int, float]:
+        with self._lock:
+            return dict(self.last_u_by_id)
+
+    def _poll_one_udp(self) -> Optional[Dict[int, float]]:
         try:
             data, _ = self.sock.recvfrom(8192)
         except socket.timeout:
@@ -359,7 +458,6 @@ class ArmFollowerU01:
             return None
 
         u_by_id: Dict[int, float] = {}
-
         for k, v in u_field.items():
             mid: Optional[int] = None
             if isinstance(k, str) and k in self.NAME_TO_ID:
@@ -377,36 +475,24 @@ class ArmFollowerU01:
             except Exception:
                 pass
 
-        if u_by_id:
-            self.last_u_by_id.update(u_by_id)
-            self.last_rx_t = time.time()
-            return dict(self.last_u_by_id)
+        return u_by_id if u_by_id else None
 
-        return None
-
-    def step_write_servos(self) -> Dict[int, int]:
-        """
-        Convert last_u_by_id -> goal ticks and write to servos.
-        Returns goals (ticks) dict.
-        """
+    def _step_write_servos(self, u_by_id: Dict[int, float]) -> None:
         goals: Dict[int, int] = {}
 
         for mid in self.ids:
-            u = float(self.last_u_by_id.get(mid, 0.5))
+            u = float(u_by_id.get(mid, 0.5))
 
             lo, hi = self.map_limits[mid]
             if mid == 6 and self.gr_override is not None:
                 lo, hi = self.gr_override
 
             lo_s, hi_s = soft_range(lo, hi, self.soft_margin)
-
             mapped = u_to_ticks(u, lo_s, hi_s, self.INVERT.get(mid, False), self.TRIM.get(mid, 0))
 
-            # EEPROM safety clamp
             e_lo, e_hi = self.eeprom_limits[mid]
             after_eeprom = clamp_ticks(mapped, e_lo, e_hi)
 
-            # rate limit
             if self.q_cmd[mid] is None:
                 goal = after_eeprom
             else:
@@ -421,14 +507,48 @@ class ArmFollowerU01:
             self.q_cmd[mid] = goal
             goals[mid] = goal
 
-        # write goals
         for mid, pos in goals.items():
             raw = encode_sign_magnitude(pos, SIGN_BITS["Goal_Position"])
             ok, err = self.bus.write2(mid, CTRL_TABLE["Goal_Position"][0], raw)
             if not ok and self.verbose:
                 print(f"[arm][WARN] write goal failed ID {mid}: {err}", file=sys.stderr)
 
-        return goals
+    def _run(self):
+        next_t = time.time()
+        local_u = dict(self.last_u_by_id)
+
+        while not self._stop.is_set():
+            # Drain UDP queue (prevents backlog -> lag)
+            got_any = False
+            while True:
+                u_delta = self._poll_one_udp()
+                if u_delta is None:
+                    break
+                got_any = True
+                local_u.update(u_delta)
+                if not self.drain_all_udp:
+                    break
+
+            if got_any:
+                self.last_rx_t = time.time()
+
+            # Apply keep-out remap on full state
+            local_u = remap_values_to_zone(local_u, verbose=self.verbose)
+
+            # Publish latest u for logger
+            with self._lock:
+                self.last_u_by_id = dict(local_u)
+
+            # Write servos
+            self._step_write_servos(local_u)
+
+            # Rate keeping (resync if late)
+            next_t += self.dt
+            sleep_s = next_t - time.time()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            else:
+                next_t = time.time()
 
 
 ########################################
@@ -441,10 +561,12 @@ class EpisodeLoggerDual:
         self.session_id = session_id
         self.episode_id = 0
         self.step_idx = 0
+
         self.ep_dir = None
         self.frames_dir = None
         self.meta_path = None
         self.meta_file = None
+
         self._open_new_files_for_episode()
 
     def _open_new_files_for_episode(self):
@@ -468,8 +590,18 @@ class EpisodeLoggerDual:
         print(f"--- New episode started: episode_id={self.episode_id} ---")
         self._open_new_files_for_episode()
 
-    def log_step(self, frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w,
-                 u_arm: Optional[Dict[int, float]] = None):
+    def log_step(
+        self,
+        frame_front_rgb,
+        frame_side_rgb,
+        dyaw_deg,
+        ax_g,
+        ay_g,
+        az_g,
+        v,
+        w,
+        u_arm: Optional[Dict[int, float]] = None,
+    ):
         ts = time.time()
 
         front_name = f"front_{self.step_idx:06d}.jpg"
@@ -609,18 +741,20 @@ def main():
     parser.add_argument("--arm-baudrate", type=int, default=1_000_000)
     parser.add_argument("--udp-port", type=int, default=5005)
     parser.add_argument("--ids", type=int, nargs="+", default=[2, 3, 4, 6])
+
     parser.add_argument("--follower_calib", required=False, default=None)
     parser.add_argument("--gripper_range", type=int, nargs=2, default=None)
     parser.add_argument("--invert", type=int, nargs="*", default=[])
     parser.add_argument("--trim", type=str, default="")
     parser.add_argument("--soft_margin", type=float, default=0.0)
     parser.add_argument("--arm-hz", type=float, default=120.0)
-    parser.add_argument("--max_step", type=int, default=100)
+    parser.add_argument("--max_step", type=int, default=300)
     parser.add_argument("--sock_timeout", type=float, default=0.01)
+
     parser.add_argument("--servo1_accel", type=int, default=None)
     parser.add_argument("--arm-verbose", action="store_true")
-    parser.add_argument("--arm-timeout-s", type=float, default=1.0,
-                        help="Warn if no u01 packets for this long while recording (arm enabled).")
+    parser.add_argument("--arm-drain", action="store_true", help="Drain all pending UDP packets each arm tick (reduces lag).")
+    parser.add_argument("--arm-timeout-s", type=float, default=1.0)
 
     args = parser.parse_args()
 
@@ -635,7 +769,7 @@ def main():
     print("Base dir:", base_dir)
     print(f"Preview: {args.preview} ({preview_size[0]}x{preview_size[1]})")
     print(f"Cams: disable_front={args.disable_front_cam} disable_side={args.disable_side_cam}")
-    print(f"Arm: enable={args.arm_enable} udp={args.udp_port} ids={args.ids}")
+    print(f"Arm: enable={args.arm_enable} udp={args.udp_port} ids={args.ids} hz={args.arm_hz} max_step={args.max_step}")
     print()
 
     # Base
@@ -696,7 +830,7 @@ def main():
     print("[6/7] Init preview manager...")
     pv = PreviewManagerDual(enable_preview=args.preview, preview_size=preview_size)
 
-    # Arm follower integrated
+    # Arm follower integrated (thread)
     arm: Optional[ArmFollowerU01] = None
     if args.arm_enable:
         if not args.follower_calib:
@@ -716,6 +850,7 @@ def main():
             gripper_range=tuple(args.gripper_range) if args.gripper_range else None,
             servo1_accel=args.servo1_accel,
             verbose=args.arm_verbose,
+            drain_all_udp=args.arm_drain,
         )
 
     print("[7/7] Ready.")
@@ -738,9 +873,6 @@ def main():
     # Heartbeat printing
     last_heartbeat = time.time()
     heartbeat_s = 2.0
-
-    # Arm write scheduling
-    next_arm_t = time.time()
 
     try:
         while True:
@@ -768,7 +900,6 @@ def main():
 
             # Base drive
             lx, rx, turbo_val = read_gamepad_axes(js)
-
             turbo_mult = 1.0
             if USE_TURBO and turbo_val >= TURBO_MIN:
                 turbo_mult = 1.0 + (turbo_val - TURBO_MIN) / (1.0 - TURBO_MIN) * (TURBO_GAIN - 1.0)
@@ -777,20 +908,10 @@ def main():
             w = rx * MAX_W * turbo_mult
             esp.send_cmd(v, w)
 
-            # Arm: receive UDP and write at arm-hz
+            # Arm state for logging (thread handles servo writes)
             u_arm: Optional[Dict[int, float]] = None
             if arm is not None:
-                got = arm.poll_udp()
-                if got is not None:
-                    u_arm = got
-                else:
-                    u_arm = dict(arm.last_u_by_id)
-
-                if time.time() >= next_arm_t:
-                    arm.step_write_servos()
-                    next_arm_t = time.time() + arm.dt
-
-                # warning if no packets
+                u_arm = arm.get_last_u()
                 if recording and args.arm_timeout_s > 0 and arm.last_rx_t > 0:
                     if (time.time() - arm.last_rx_t) > args.arm_timeout_s:
                         if time.time() - last_heartbeat > heartbeat_s:
