@@ -328,9 +328,7 @@ class ArmFollowerU01:
         "elbow_flex": 3,
         "wrist_flex": 4,
         "gripper": 6,
-        "servo1": 1,
     }
-
 
     def __init__(
         self,
@@ -414,6 +412,7 @@ class ArmFollowerU01:
 
         # Re-init command state dicts to match filtered ids
         self.last_u_by_id = {mid: 0.5 for mid in self.ids}
+        self.last_desired_u_by_id = {mid: 0.5 for mid in self.NAME_TO_ID.values()}
         self.q_cmd = {mid: None for mid in self.ids}
 
 
@@ -422,6 +421,7 @@ class ArmFollowerU01:
         self.sock.settimeout(max(0.001, float(sock_timeout)))
 
         self.last_u_by_id: Dict[int, float] = {mid: 0.5 for mid in self.ids}
+        self.last_desired_u_by_id: Dict[int, float] = {mid: 0.5 for mid in self.NAME_TO_ID.values()}
         self.last_rx_t: float = 0.0
         self.q_cmd: Dict[int, Optional[int]] = {mid: None for mid in self.ids}
 
@@ -458,6 +458,10 @@ class ArmFollowerU01:
     def get_last_u(self) -> Dict[int, float]:
         with self._lock:
             return dict(self.last_u_by_id)
+        
+    def get_last_desired_u(self) -> Dict[int, float]:
+        with self._lock:
+            return dict(self.last_desired_u_by_id)
 
     def _poll_one_udp(self) -> Optional[Dict[int, float]]:
         try:
@@ -538,6 +542,7 @@ class ArmFollowerU01:
     def _run(self):
         next_t = time.time()
         local_u = dict(self.last_u_by_id)
+        now_desired_u = dict(self.last_desired_u_by_id)
 
         while not self._stop.is_set():
             # Drain UDP queue (prevents backlog -> lag)
@@ -548,6 +553,7 @@ class ArmFollowerU01:
                     break
                 got_any = True
                 local_u.update(u_delta)
+                now_desired_u.update(u_delta)
                 if not self.drain_all_udp:
                     break
 
@@ -560,6 +566,7 @@ class ArmFollowerU01:
             # Publish latest u for logger
             with self._lock:
                 self.last_u_by_id = dict(local_u)
+                self.last_desired_u_by_id = dict(now_desired_u)
 
             # Write servos
             self._step_write_servos(local_u)
@@ -948,9 +955,10 @@ def main():
                             print(f"[WARN] No arm u01 packets for {time.time()-arm.last_rx_t:.2f}s on UDP :{args.udp_port}")
                             last_heartbeat = time.time()
 
+            desired_u_arm: Optional[Dict[int, float]] = None
             # Optional: add leader shoulder_pan (servo 1, u01 center=0.5) as extra turning
-            if args.wheel_pan_enable and u_arm is not None and 1 in u_arm:
-                u1 = float(u_arm[1])  # [0..1], center=0.5
+            if args.wheel_pan_enable and desired_u_arm is not None and 1 in desired_u_arm:
+                u1 = float(desired_u_arm[1])  # [0..1], center=0.5
                 d = u1 - 0.5
 
                 dz = max(0.0, min(0.45, float(args.wheel_pan_deadzone)))
