@@ -6,14 +6,12 @@ import json
 import argparse
 import socket
 import numpy as np
-
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import pygame
 
 from gst_cam import GstCam
-
 from shared.constants import FRAME_SIZE, JPEG_QUALITY, MAX_V, MAX_W
 from shared.esp32_link import ESP32Link
 from shared.imu_mpu6050 import MPU6050GyroYaw
@@ -36,6 +34,7 @@ TURBO_GAIN  = 1.75
 
 BTN_TOGGLE_REC  = 0   # A
 BTN_NEW_EPISODE = 1   # B
+
 
 def black_rgb_frame():
     # FRAME_SIZE is (W, H). Numpy expects (H, W, 3)
@@ -66,14 +65,12 @@ def init_gamepad():
     print(f"Gamepad connected: {js.get_name()}")
     return js
 
+# IMPORTANT: no pygame.event.pump() here; we pump ONCE per loop in main
 def read_gamepad_axes(js):
-    pygame.event.pump()
-
     lx = js.get_axis(1)  # left stick vertical
     rx = js.get_axis(2)  # right stick horizontal
 
     lx = -lx
-    rx = rx
 
     lx = apply_deadzone(lx, DEADZONE)
     rx = apply_deadzone(rx, DEADZONE)
@@ -92,81 +89,54 @@ def read_gamepad_axes(js):
     return lx, rx, turbo_val
 
 
-class ArmControlUDP:
+class ArmU01Receiver:
     """
-    Sends arm u01 packets over UDP to follower_receive_u01.py.
+    Receives u01 arm packets from your leader PC WITHOUT modifying the leader program.
 
-    - Maintains internal u targets for each servo id in [0,1]
-    - Updates u from gamepad (hold-to-move) at rate u_per_s
-    - Sends {"unit":"u01","u":{"2":0.5,...}} to UDP target
+    Key point:
+      - Your follower already binds UDP port 5005.
+      - This receiver ALSO binds UDP port 5005 using SO_REUSEADDR and (if available) SO_REUSEPORT,
+        so both processes can listen on the same UDP port on Linux.
 
-    Default mapping:
-      - Servo 2: D-pad up/down (hat y)
-      - Servo 3: D-pad left/right (hat x)
-      - Servo 4: LB / RB (buttons 4/5)
-      - Servo 6: triggers (tries several LT/RT axis pairs), RT closes (u+), LT opens (u-)
-      - Servo 1 (optional): right stick horizontal (axis servo1_axis), proportional nudging
+    Leader payload example:
+      {"t":..., "unit":"u01", "u":{"shoulder_lift":0.5,"elbow_flex":...}}
+
+    We store u as IDs:
+      {2:..., 3:..., 4:..., 6:...}
     """
 
-    _TRIGGER_AXIS_CANDIDATES: List[Tuple[int, int]] = [
-        (2, 5),
-        (4, 5),
-        (3, 4),
-        (2, 3),
-    ]
+    NAME_TO_ID = {
+        "shoulder_lift": 2,
+        "elbow_flex": 3,
+        "wrist_flex": 4,
+        "gripper": 6,
+    }
 
-    def __init__(
-        self,
-        udp_ip: str = "127.0.0.1",
-        udp_port: int = 5005,
-        ids: Optional[List[int]] = None,
-        *,
-        send_hz: float = 30.0,
-        u_per_s: float = 0.60,
-        u_init: Optional[Dict[int, float]] = None,
-        include_servo1: bool = False,
-        servo1_axis: int = 3,
-        servo1_init: float = 0.5,
-        deadzone: float = 0.15,
-        verbose: bool = False,
-    ):
-        if ids is None:
-            ids = [2, 3, 4, 6]
-
-        self.udp_ip = str(udp_ip)
-        self.udp_port = int(udp_port)
-        self.addr = (self.udp_ip, self.udp_port)
-
-        self.ids: List[int] = list(ids)
-        self.include_servo1 = bool(include_servo1)
-        if self.include_servo1 and 1 not in self.ids:
-            self.ids = [1] + self.ids
-
-        self.send_hz = float(send_hz)
-        self.dt = 1.0 / max(1.0, self.send_hz)
-        self.u_per_s = float(u_per_s)
-
-        self.deadzone = float(deadzone)
-        self.servo1_axis = int(servo1_axis)
+    def __init__(self, bind_ip: str = "0.0.0.0", udp_port: int = 5005, verbose: bool = False):
         self.verbose = bool(verbose)
-
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        self.u: Dict[int, float] = {mid: 0.5 for mid in self.ids}
-        if u_init:
-            for k, v in u_init.items():
-                try:
-                    self.u[int(k)] = clamp01(float(v))
-                except Exception:
-                    pass
+        # Allow sharing the same UDP port with follower_receive_u01.py
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+        # SO_REUSEPORT is Linux-specific; try it if present
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except Exception:
+            pass
 
-        if self.include_servo1:
-            self.u[1] = clamp01(float(servo1_init))
+        self.sock.bind((bind_ip, int(udp_port)))
 
-        self._last_send_t = 0.0
+        # Non-blocking
+        self.sock.setblocking(False)
+
+        self.last_u: Optional[Dict[int, float]] = None
+        self.last_rx_time: float = 0.0
 
         if self.verbose:
-            print(f"[ArmControlUDP] UDP -> {self.udp_ip}:{self.udp_port} ids={self.ids}")
+            print(f"[ArmU01Receiver] listening on {bind_ip}:{udp_port} (reuseaddr/reuseport if available)")
 
     def close(self):
         try:
@@ -174,99 +144,55 @@ class ArmControlUDP:
         except Exception:
             pass
 
-    def _apply_deadzone(self, x: float) -> float:
-        if abs(x) < self.deadzone:
-            return 0.0
-        s = 1.0 if x > 0 else -1.0
-        return s * (abs(x) - self.deadzone) / (1.0 - self.deadzone)
-
-    def _nudge(self, mid: int, direction: float):
-        if mid not in self.u:
-            return
-        self.u[mid] = clamp01(self.u[mid] + float(direction) * self.u_per_s * self.dt)
-
-    def update_from_gamepad(self, js) -> Dict[int, float]:
-        pygame.event.pump()
-
-        # D-pad (hat) -> servo 2/3
+    def poll(self) -> Optional[Dict[int, float]]:
+        """
+        Poll once (non-blocking). If a packet arrives, parse and return u_by_id.
+        Otherwise return None.
+        """
         try:
-            hx, hy = js.get_hat(0)
+            data, _ = self.sock.recvfrom(8192)
+        except BlockingIOError:
+            return None
         except Exception:
-            hx, hy = 0, 0
+            return None
 
-        if 2 in self.u and hy != 0:
-            self._nudge(2, +1.0 if hy > 0 else -1.0)
+        try:
+            msg = json.loads(data.decode("utf-8"))
+        except Exception:
+            return None
 
-        if 3 in self.u and hx != 0:
-            self._nudge(3, +1.0 if hx > 0 else -1.0)
+        if msg.get("unit") != "u01":
+            return None
 
-        # LB/RB -> servo 4
-        if 4 in self.u:
+        u_field = msg.get("u", {})
+        if not isinstance(u_field, dict):
+            return None
+
+        out: Dict[int, float] = {}
+        for k, v in u_field.items():
+            mid: Optional[int] = None
+
+            if isinstance(k, str) and k in self.NAME_TO_ID:
+                mid = self.NAME_TO_ID[k]
+            elif isinstance(k, str) and k.isdigit():
+                mid = int(k)
+            elif isinstance(k, int):
+                mid = k
+
+            if mid is None:
+                continue
+
             try:
-                lb = js.get_button(4) == 1
-            except Exception:
-                lb = False
-            try:
-                rb = js.get_button(5) == 1
-            except Exception:
-                rb = False
-
-            if lb and not rb:
-                self._nudge(4, -1.0)
-            elif rb and not lb:
-                self._nudge(4, +1.0)
-
-        # Triggers -> gripper (servo 6)
-        if 6 in self.u:
-            lt = 0.0
-            rt = 0.0
-            found = False
-            for lt_axis, rt_axis in self._TRIGGER_AXIS_CANDIDATES:
-                try:
-                    lt = (js.get_axis(lt_axis) + 1.0) * 0.5
-                    rt = (js.get_axis(rt_axis) + 1.0) * 0.5
-                    found = True
-                    break
-                except Exception:
-                    continue
-            if not found:
-                lt, rt = 0.0, 0.0
-
-            lt = clamp01(lt)
-            rt = clamp01(rt)
-
-            g_dir = rt - lt  # RT close (u+), LT open (u-)
-            if abs(g_dir) > 0.05:
-                self._nudge(6, +1.0 if g_dir > 0 else -1.0)
-
-        # Optional servo 1 -> right stick horizontal
-        if self.include_servo1 and 1 in self.u:
-            try:
-                x = float(js.get_axis(self.servo1_axis))
-                x = self._apply_deadzone(x)
-                if abs(x) > 0.001:
-                    self._nudge(1, x)
+                out[mid] = clamp01(float(v))
             except Exception:
                 pass
 
-        return dict(self.u)
+        if out:
+            self.last_u = out
+            self.last_rx_time = time.time()
+            return out
 
-    def build_packet(self, u_by_id: Dict[int, float]) -> bytes:
-        msg = {
-            "unit": "u01",
-            "u": {str(k): float(clamp01(v)) for k, v in u_by_id.items()},
-        }
-        return json.dumps(msg).encode("utf-8")
-
-    def send(self, u_by_id: Dict[int, float], *, rate_limit: bool = True) -> None:
-        if rate_limit:
-            now = time.time()
-            if (now - self._last_send_t) < self.dt:
-                return
-            self._last_send_t = now
-
-        data = self.build_packet(u_by_id)
-        self.sock.sendto(data, self.addr)
+        return None
 
 
 class EpisodeLoggerDual:
@@ -279,8 +205,8 @@ class EpisodeLoggerDual:
     Required schema fields per step:
       img_front, img_side, dyaw_deg, ax_g, ay_g, az_g, v, w
 
-    Additive field when arm is enabled:
-      u_arm: {"2":..., "3":..., ...}
+    Additive field:
+      u_arm: {"2":..., "3":..., ...}  (if --arm-log enabled)
     """
 
     def __init__(self, base_dir, session_id):
@@ -317,7 +243,18 @@ class EpisodeLoggerDual:
         print(f"--- New episode started: episode_id={self.episode_id} ---")
         self._open_new_files_for_episode()
 
-    def log_step(self, frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w, u_arm: Optional[Dict[int, float]] = None):
+    def log_step(
+        self,
+        frame_front_rgb,
+        frame_side_rgb,
+        dyaw_deg,
+        ax_g,
+        ay_g,
+        az_g,
+        v,
+        w,
+        u_arm: Optional[Dict[int, float]] = None,
+    ):
         ts = time.time()
 
         front_name = f"front_{self.step_idx:06d}.jpg"
@@ -373,7 +310,7 @@ class EpisodeLoggerDual:
 class PreviewManagerDual:
     """
     Two separate windows: 'front' and 'side'
-    Overlays REC/PAUSED and episode id, plus optional step counter.
+    Overlays REC/PAUSED and episode id, plus step counter.
     """
 
     def __init__(self, enable_preview: bool, preview_size: tuple[int, int]):
@@ -390,7 +327,6 @@ class PreviewManagerDual:
     def _overlay(frame_bgr, recording: bool, episode_id: int, step_idx: int):
         state = "REC" if recording else "PAUSED"
         label = f"{state}  ep{episode_id:03d}  step{step_idx:06d}"
-
         color = (0, 0, 255) if recording else (0, 255, 255)
 
         cv2.putText(
@@ -438,43 +374,36 @@ def main():
     parser.add_argument("--port", default="/dev/ttyTHS1")
     parser.add_argument("--baud", type=int, default=115200)
 
-    # Cameras (CSI via nvarguscamerasrc)
+    # Cameras
     parser.add_argument("--front-sensor-id", type=int, default=0)
     parser.add_argument("--side-sensor-id", type=int, default=1)
     parser.add_argument("--capture-width", type=int, default=640)
     parser.add_argument("--capture-height", type=int, default=480)
     parser.add_argument("--capture-fps", type=int, default=30)
 
-    # Preview (two windows)
+    # Preview
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--preview-height", type=int, default=540)
     parser.add_argument("--preview-width", type=int, default=920)
 
-    # Logging verbosity behavior
+    # Logging verbosity
     parser.add_argument("--print-while-recording", action="store_true",
                         help="If set, print periodic status lines while recording. Default: quiet.")
-
-    # Arm control (UDP to follower_receive_u01.py)
-    parser.add_argument("--arm-enable", action="store_true",
-                        help="Enable arm control: send u01 UDP packets and log u_arm.")
-    parser.add_argument("--arm-udp-ip", default="127.0.0.1")
-    parser.add_argument("--arm-udp-port", type=int, default=5005)
-    parser.add_argument("--arm-ids", type=int, nargs="+", default=[2, 3, 4, 6])
-    parser.add_argument("--arm-u-per-s", type=float, default=0.60)
-    parser.add_argument("--arm-deadzone", type=float, default=0.15)
-    parser.add_argument("--arm-verbose", action="store_true")
-
-    # Optional servo 1 support
-    parser.add_argument("--arm-include-servo1", action="store_true",
-                        help="Include servo ID 1 in outgoing u01 packets.")
-    parser.add_argument("--arm-servo1-axis", type=int, default=3,
-                        help="Pygame axis index for servo 1 control (default: 3).")
-    parser.add_argument("--arm-servo1-init", type=float, default=0.5)
 
     # Camera disable
     parser.add_argument("--disable-front-cam", action="store_true")
     parser.add_argument("--disable-side-cam", action="store_true")
 
+    # Arm logging (receiver)
+    parser.add_argument("--arm-log", action="store_true",
+                        help="Log leader u01 arm packets (received via UDP) into episode.jsonl as u_arm.")
+    parser.add_argument("--arm-udp-port", type=int, default=5005,
+                        help="UDP port to listen on for u01 arm packets (default: 5005).")
+    parser.add_argument("--arm-udp-bind", default="0.0.0.0",
+                        help="Bind IP for arm receiver (default: 0.0.0.0).")
+    parser.add_argument("--arm-timeout-s", type=float, default=1.0,
+                        help="Warn if no arm packets received for this long while recording.")
+    parser.add_argument("--arm-verbose", action="store_true")
 
     args = parser.parse_args()
 
@@ -488,7 +417,7 @@ def main():
     print("Session:", session_id)
     print("Base dir:", base_dir)
     print(f"Preview: {args.preview} ({preview_size[0]}x{preview_size[1]})")
-    print(f"Arm: {args.arm_enable} -> {args.arm_udp_ip}:{args.arm_udp_port} ids={args.arm_ids} servo1={args.arm_include_servo1}")
+    print(f"Arm log: {args.arm_log} (bind {args.arm_udp_bind}:{args.arm_udp_port})")
     print()
 
     print("[1/6] Init ESP32 serial link...")
@@ -529,17 +458,10 @@ def main():
 
     front_alive = (cam_front is not None) and getattr(cam_front, "alive", False)
     side_alive  = (cam_side  is not None) and getattr(cam_side,  "alive", False)
-
     print(f"cam_front alive: {front_alive}")
     print(f"cam_side  alive: {side_alive}")
-
-    # Allow running even if one (or both) cams are missing:
     if not front_alive and not side_alive:
         print("[WARN] No cameras alive. Will run with black frames only.")
-
-
-    if not cam_front.alive and not cam_side.alive:
-        raise RuntimeError("Neither camera came up. Cannot record.")
 
     print("[4/6] Init gamepad...")
     js = init_gamepad()
@@ -550,26 +472,20 @@ def main():
     print("[6/6] Init preview manager...")
     pv = PreviewManagerDual(enable_preview=args.preview, preview_size=preview_size)
 
-    # Arm controller instance (UDP sender)
-    arm: Optional[ArmControlUDP] = None
-    if args.arm_enable:
-        arm = ArmControlUDP(
-            udp_ip=args.arm_udp_ip,
-            udp_port=args.arm_udp_port,
-            ids=args.arm_ids,
-            send_hz=SEND_HZ,
-            u_per_s=args.arm_u_per_s,
-            include_servo1=args.arm_include_servo1,
-            servo1_axis=args.arm_servo1_axis,
-            servo1_init=args.arm_servo1_init,
-            deadzone=args.arm_deadzone,
-            verbose=args.arm_verbose,
-        )
+    arm_rx: Optional[ArmU01Receiver] = None
+    if args.arm_log:
+        arm_rx = ArmU01Receiver(bind_ip=args.arm_udp_bind, udp_port=args.arm_udp_port, verbose=args.arm_verbose)
 
     recording = False
     last_toggle_state = False
     last_new_ep_state = False
 
+    # Debounce to prevent instant double toggles
+    debounce_s = 0.25
+    last_toggle_t = 0.0
+    last_new_ep_t = 0.0
+
+    # Heartbeat printing
     last_heartbeat = time.time()
     heartbeat_s = 2.0
 
@@ -577,30 +493,33 @@ def main():
     print("Controls:")
     print("  A: toggle recording on/off")
     print("  B: start a new episode (increments ep id)")
-    if args.arm_enable:
-        print("  Arm control enabled: sends u01 UDP packets (check follower_receive_u01.py is running)")
-        if args.arm_include_servo1:
-            print(f"  Servo 1 control on axis {args.arm_servo1_axis}")
     print("  ESC (in preview): exit")
+    if args.arm_log:
+        print(f"  Arm logging: listening on {args.arm_udp_bind}:{args.arm_udp_port} (shared with follower)")
     print()
 
     try:
         while True:
             t0 = time.time()
 
+            # Pump ONCE per loop (do not pump in helper functions)
             pygame.event.pump()
-            btn_toggle = js.get_button(BTN_TOGGLE_REC) == 1
-            btn_new_ep = js.get_button(BTN_NEW_EPISODE) == 1
 
-            # Toggle recording on rising edge
-            if btn_toggle and not last_toggle_state:
+            btn_toggle = (js.get_button(BTN_TOGGLE_REC) == 1)
+            btn_new_ep = (js.get_button(BTN_NEW_EPISODE) == 1)
+            now = time.time()
+
+            # Toggle recording on rising edge + debounce
+            if btn_toggle and (not last_toggle_state) and ((now - last_toggle_t) > debounce_s):
                 recording = not recording
+                last_toggle_t = now
                 print(f"Recording: {recording} (ep{logger.episode_id:03d})")
             last_toggle_state = btn_toggle
 
-            # New episode on rising edge
-            if btn_new_ep and not last_new_ep_state:
+            # New episode on rising edge + debounce
+            if btn_new_ep and (not last_new_ep_state) and ((now - last_new_ep_t) > debounce_s):
                 logger.start_new_episode()
+                last_new_ep_t = now
                 print(f"Episode changed: ep{logger.episode_id:03d}")
             last_new_ep_state = btn_new_ep
 
@@ -616,17 +535,21 @@ def main():
 
             esp.send_cmd(v, w)
 
-            # Arm controls (UDP -> follower)
+            # Arm logging: poll non-blocking
             u_arm: Optional[Dict[int, float]] = None
-            if arm is not None:
-                u_arm = arm.update_from_gamepad(js)
-                arm.send(u_arm, rate_limit=True)
+            if arm_rx is not None:
+                got = arm_rx.poll()
+                if got is not None:
+                    u_arm = got
+                else:
+                    # keep last known for logging continuity (optional)
+                    u_arm = arm_rx.last_u
 
             # Sensors
             dyaw_deg = imu.update_and_get_yaw_delta_deg()
             ax_g, ay_g, az_g = imu.read_accel_g()
 
-            # Frames: if a cam is missing/dead, use a black frame so the loop never stalls.
+            # Frames: if a cam is missing/dead, use a black frame.
             frame_front_rgb = black_rgb_frame()
             frame_side_rgb  = black_rgb_frame()
 
@@ -637,7 +560,7 @@ def main():
                         frame_front_rgb = f
                 except Exception as e:
                     print(f"front cam err: {e}")
-                    cam_front.alive = False  # fallback to black
+                    cam_front.alive = False
 
             if cam_side is not None and getattr(cam_side, "alive", False):
                 try:
@@ -646,13 +569,31 @@ def main():
                         frame_side_rgb = s
                 except Exception as e:
                     print(f"side cam err: {e}")
-                    cam_side.alive = False  # fallback to black
+                    cam_side.alive = False
 
-            # Log only if recording AND frames exist
-            if recording and (frame_front_rgb is not None) and (frame_side_rgb is not None):
-                logger.log_step(frame_front_rgb, frame_side_rgb, dyaw_deg, ax_g, ay_g, az_g, v, w, u_arm=u_arm)
+            # Warn if arm packets are not arriving while recording
+            if recording and arm_rx is not None and args.arm_timeout_s > 0:
+                if arm_rx.last_rx_time > 0 and (time.time() - arm_rx.last_rx_time) > args.arm_timeout_s:
+                    # print at heartbeat rate only
+                    if time.time() - last_heartbeat > heartbeat_s:
+                        print(f"[WARN] No arm u01 packets for {time.time()-arm_rx.last_rx_time:.2f}s on {args.arm_udp_bind}:{args.arm_udp_port}")
+                        last_heartbeat = time.time()
 
-            # Preview overlay always shows current state + ep + step_idx
+            # Log only if recording
+            if recording:
+                logger.log_step(
+                    frame_front_rgb,
+                    frame_side_rgb,
+                    dyaw_deg,
+                    ax_g,
+                    ay_g,
+                    az_g,
+                    v,
+                    w,
+                    u_arm=u_arm,
+                )
+
+            # Preview
             pv.update(frame_front_rgb, frame_side_rgb, recording, logger.episode_id, logger.step_idx)
 
             # Exit via ESC only if preview enabled
@@ -664,11 +605,9 @@ def main():
             # Console output policy
             if recording and args.print_while_recording:
                 if time.time() - last_heartbeat > heartbeat_s:
-                    if arm is not None and u_arm is not None:
-                        # small compact arm print
+                    arm_str = ""
+                    if u_arm is not None:
                         arm_str = " ".join([f"{k}={u_arm[k]:.2f}" for k in sorted(u_arm.keys())])
-                    else:
-                        arm_str = ""
                     print(f"[REC ep{logger.episode_id:03d}] step={logger.step_idx} v={v:+.2f} w={w:+.2f} dyaw={dyaw_deg:+.2f} {arm_str}")
                     last_heartbeat = time.time()
 
@@ -688,6 +627,7 @@ def main():
 
     finally:
         logger.close()
+
         try:
             if cam_front is not None:
                 cam_front.release()
@@ -698,13 +638,16 @@ def main():
                 cam_side.release()
         except Exception:
             pass
+
         try:
-            if arm is not None:
-                arm.close()
+            if arm_rx is not None:
+                arm_rx.close()
         except Exception:
             pass
+
         esp.close()
         pv.close()
+
         print("Session saved at", base_dir)
         print("Episodes are in epXXX/ subfolders.")
         print("Done.")
