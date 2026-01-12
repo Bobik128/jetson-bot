@@ -1,4 +1,4 @@
-/usr/bin/python3 collect_demos.py \
+/usr/bin/python3 ./../src/collect_demos.py \
   --preview --preview-height 540 --preview-width 920 \
   --disable-side-cam \
   --arm-enable \
