@@ -376,26 +376,46 @@ class ArmFollowerU01:
         self.eeprom_limits: Dict[int, Tuple[int, int]] = {}
         self.map_limits: Dict[int, Tuple[int, int]] = {}
 
+        active_ids: List[int] = []
         for mid in self.ids:
-            self.bus.write1(mid, CTRL_TABLE["Operating_Mode"][0], 0)
+            try:
+                # Basic setup
+                self.bus.write1(mid, CTRL_TABLE["Operating_Mode"][0], 0)
 
-            accel_val = 254
-            if servo1_accel is not None and mid == 1:
-                accel_val = int(servo1_accel)
-            self.bus.write1(mid, CTRL_TABLE["Acceleration"][0], accel_val)
+                accel_val = 254
+                if servo1_accel is not None and mid == 1:
+                    accel_val = int(servo1_accel)
+                self.bus.write1(mid, CTRL_TABLE["Acceleration"][0], accel_val)
 
-            self.bus.write1(mid, CTRL_TABLE["Lock"][0], 1)
-            self.bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 0)
+                self.bus.write1(mid, CTRL_TABLE["Lock"][0], 1)
+                self.bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 0)
 
-            mn = self.bus.read2(mid, CTRL_TABLE["Min_Position_Limit"][0])
-            mx = self.bus.read2(mid, CTRL_TABLE["Max_Position_Limit"][0])
-            self.eeprom_limits[mid] = (mn, mx)
+                # Probe by reading EEPROM limits (fast sanity check)
+                mn = self.bus.read2(mid, CTRL_TABLE["Min_Position_Limit"][0])
+                mx = self.bus.read2(mid, CTRL_TABLE["Max_Position_Limit"][0])
 
+                self.eeprom_limits[mid] = (mn, mx)
+                active_ids.append(mid)
+            except Exception as e:
+                print(f"[arm][WARN] ID {mid} not responding on {port} @ {baudrate}. Skipping. err={e}", file=sys.stderr)
+
+        # Only keep motors that actually respond
+        self.ids = active_ids
+        if not self.ids:
+            raise RuntimeError("[arm] No responding servos found. Check port/baud/IDs.")
+
+        # Mapping limits from calib (fallback to EEPROM)
         for mid in self.ids:
             self.map_limits[mid] = calib_ranges.get(mid, self.eeprom_limits[mid])
 
+        # Torque ON once for active motors
         for mid in self.ids:
             self.bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 1)
+
+        # Re-init command state dicts to match filtered ids
+        self.last_u_by_id = {mid: 0.5 for mid in self.ids}
+        self.q_cmd = {mid: None for mid in self.ids}
+
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0", int(udp_port)))
