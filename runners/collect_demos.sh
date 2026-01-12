@@ -1,8 +1,13 @@
-/usr/bin/python3 ../src/collect_demos.py \
-  --preview \
-  --preview-height 540 \
-  --preview-width 920 \
+/usr/bin/python3 collect_demos_unified.py \
+  --preview --preview-height 540 --preview-width 920 \
+  --disable-side-cam \
   --arm-enable \
-  --arm-udp-ip 127.0.0.1 \
-  --arm-udp-port 5005 \
+  --arm-port /dev/ttyACM0 \
+  --udp-port 5005 \
+  --ids 2 3 4 6 \
+  --follower_calib ./../data/calibrations/hand_calibration.json \
+  --soft_margin 0.0 \
+  --arm-hz 120 \
+  --max_step 100 \
+  --invert 6 \
   --disable-side-cam
