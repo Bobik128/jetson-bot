@@ -4,4 +4,5 @@
   --preview-width 920 \
   --arm-enable \
   --arm-udp-ip 127.0.0.1 \
-  --arm-udp-port 5005
+  --arm-udp-port 5005 \
+  --disable-side-cam

@@ -5,6 +5,8 @@ import time
 import json
 import argparse
 import socket
+import numpy as np
+
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -35,6 +37,10 @@ TURBO_GAIN  = 1.75
 BTN_TOGGLE_REC  = 0   # A
 BTN_NEW_EPISODE = 1   # B
 
+def black_rgb_frame():
+    # FRAME_SIZE is (W, H). Numpy expects (H, W, 3)
+    w, h = FRAME_SIZE
+    return np.zeros((h, w, 3), dtype=np.uint8)
 
 def expo_curve(x, expo=0.25):
     return (1 - expo) * x + expo * (x**3)
@@ -465,6 +471,11 @@ def main():
                         help="Pygame axis index for servo 1 control (default: 3).")
     parser.add_argument("--arm-servo1-init", type=float, default=0.5)
 
+    # Camera disable
+    parser.add_argument("--disable-front-cam", action="store_true")
+    parser.add_argument("--disable-side-cam", action="store_true")
+
+
     args = parser.parse_args()
 
     session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -487,27 +498,45 @@ def main():
     imu = MPU6050GyroYaw()
 
     print("[3/6] Init cameras...")
-    cam_front = GstCam(
-        base_dir=base_dir,
-        frame_size=FRAME_SIZE,
-        jpeg_quality=JPEG_QUALITY,
-        sensor_id=args.front_sensor_id,
-        capture_width=args.capture_width,
-        capture_height=args.capture_height,
-        capture_fps=args.capture_fps,
-    )
-    cam_side = GstCam(
-        base_dir=base_dir,
-        frame_size=FRAME_SIZE,
-        jpeg_quality=JPEG_QUALITY,
-        sensor_id=args.side_sensor_id,
-        capture_width=args.capture_width,
-        capture_height=args.capture_height,
-        capture_fps=args.capture_fps,
-    )
+    cam_front = None
+    cam_side = None
 
-    print(f"cam_front alive: {cam_front.alive}")
-    print(f"cam_side  alive: {cam_side.alive}")
+    if args.disable_front_cam:
+        print("Front cam disabled by flag.")
+    else:
+        cam_front = GstCam(
+            base_dir=base_dir,
+            frame_size=FRAME_SIZE,
+            jpeg_quality=JPEG_QUALITY,
+            sensor_id=args.front_sensor_id,
+            capture_width=args.capture_width,
+            capture_height=args.capture_height,
+            capture_fps=args.capture_fps,
+        )
+
+    if args.disable_side_cam:
+        print("Side cam disabled by flag.")
+    else:
+        cam_side = GstCam(
+            base_dir=base_dir,
+            frame_size=FRAME_SIZE,
+            jpeg_quality=JPEG_QUALITY,
+            sensor_id=args.side_sensor_id,
+            capture_width=args.capture_width,
+            capture_height=args.capture_height,
+            capture_fps=args.capture_fps,
+        )
+
+    front_alive = (cam_front is not None) and getattr(cam_front, "alive", False)
+    side_alive  = (cam_side  is not None) and getattr(cam_side,  "alive", False)
+
+    print(f"cam_front alive: {front_alive}")
+    print(f"cam_side  alive: {side_alive}")
+
+    # Allow running even if one (or both) cams are missing:
+    if not front_alive and not side_alive:
+        print("[WARN] No cameras alive. Will run with black frames only.")
+
 
     if not cam_front.alive and not cam_side.alive:
         raise RuntimeError("Neither camera came up. Cannot record.")
@@ -597,26 +626,27 @@ def main():
             dyaw_deg = imu.update_and_get_yaw_delta_deg()
             ax_g, ay_g, az_g = imu.read_accel_g()
 
-            # Frames (already resized to FRAME_SIZE by GstCam)
-            frame_front_rgb = None
-            frame_side_rgb  = None
+            # Frames: if a cam is missing/dead, use a black frame so the loop never stalls.
+            frame_front_rgb = black_rgb_frame()
+            frame_side_rgb  = black_rgb_frame()
 
-            if cam_front.alive:
+            if cam_front is not None and getattr(cam_front, "alive", False):
                 try:
-                    frame_front_rgb = cam_front.get_frame_rgb()
+                    f = cam_front.get_frame_rgb()
+                    if f is not None:
+                        frame_front_rgb = f
                 except Exception as e:
                     print(f"front cam err: {e}")
-                    cam_front.alive = False
+                    cam_front.alive = False  # fallback to black
 
-            if cam_side.alive:
+            if cam_side is not None and getattr(cam_side, "alive", False):
                 try:
-                    frame_side_rgb = cam_side.get_frame_rgb()
+                    s = cam_side.get_frame_rgb()
+                    if s is not None:
+                        frame_side_rgb = s
                 except Exception as e:
                     print(f"side cam err: {e}")
-                    cam_side.alive = False
-
-            if (not cam_front.alive) and (not cam_side.alive):
-                raise RuntimeError("Both cameras are dead (no frames).")
+                    cam_side.alive = False  # fallback to black
 
             # Log only if recording AND frames exist
             if recording and (frame_front_rgb is not None) and (frame_side_rgb is not None):
@@ -659,8 +689,13 @@ def main():
     finally:
         logger.close()
         try:
-            cam_front.release()
-            cam_side.release()
+            if cam_front is not None:
+                cam_front.release()
+        except Exception:
+            pass
+        try:
+            if cam_side is not None:
+                cam_side.release()
         except Exception:
             pass
         try:
