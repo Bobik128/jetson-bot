@@ -323,12 +323,14 @@ class ArmFollowerU01:
     """
 
     NAME_TO_ID = {
+        "shoulder_pan": 1,     # <-- add this
         "shoulder_lift": 2,
         "elbow_flex": 3,
         "wrist_flex": 4,
         "gripper": 6,
         "servo1": 1,
     }
+
 
     def __init__(
         self,
@@ -755,6 +757,14 @@ def main():
     parser.add_argument("--arm-verbose", action="store_true")
     parser.add_argument("--arm-drain", action="store_true", help="Drain all pending UDP packets each arm tick (reduces lag).")
     parser.add_argument("--arm-timeout-s", type=float, default=1.0)
+    
+    parser.add_argument("--wheel-pan-enable", action="store_true",
+                    help="Add leader servo1/shoulder_pan (u01, center=0.5) as extra wheel turn input.")
+    parser.add_argument("--wheel-pan-deadzone", type=float, default=0.06,
+                    help="Deadzone around u=0.5 for servo1 -> turn.")
+    parser.add_argument("--wheel-pan-gain", type=float, default=1.0,
+                    help="Gain multiplier for servo1 contribution to angular velocity (scaled by MAX_W).")
+
 
     args = parser.parse_args()
 
@@ -906,6 +916,22 @@ def main():
 
             v = lx * MAX_V * turbo_mult
             w = rx * MAX_W * turbo_mult
+
+            # Optional: add leader shoulder_pan (servo 1, u01 center=0.5) as extra turning
+            if args.wheel_pan_enable and u_arm is not None and 1 in u_arm:
+                u1 = float(u_arm[1])  # [0..1], center=0.5
+                d = u1 - 0.5
+
+                dz = max(0.0, min(0.45, float(args.wheel_pan_deadzone)))
+                if abs(d) < dz:
+                    d_norm = 0.0
+                else:
+                    # remove deadzone and normalize to [-1..1]
+                    d_norm = (abs(d) - dz) / (0.5 - dz) * (1.0 if d > 0 else -1.0)
+
+                w += d_norm * (MAX_W * float(args.wheel_pan_gain))
+
+            w = clamp(w, -MAX_W, MAX_W)
             esp.send_cmd(v, w)
 
             # Arm state for logging (thread handles servo writes)

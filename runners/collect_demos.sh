@@ -10,4 +10,5 @@
   --arm-hz 120 \
   --max_step 300 \
   --invert 6 \
-  --arm-drain
+  --arm-drain \
+  --wheel-pan-enable --wheel-pan-deadzone 0.1 --wheel-pan-gain 0.8
