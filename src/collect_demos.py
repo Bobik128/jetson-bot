@@ -930,12 +930,23 @@ def main():
 
             # Base drive
             lx, rx, turbo_val = read_gamepad_axes(js)
+
             turbo_mult = 1.0
             if USE_TURBO and turbo_val >= TURBO_MIN:
                 turbo_mult = 1.0 + (turbo_val - TURBO_MIN) / (1.0 - TURBO_MIN) * (TURBO_GAIN - 1.0)
 
             v = lx * MAX_V * turbo_mult
             w = rx * MAX_W * turbo_mult
+
+            # Arm state for logging (thread handles servo writes)
+            u_arm: Optional[Dict[int, float]] = None
+            if arm is not None:
+                u_arm = arm.get_last_u()
+                if recording and args.arm_timeout_s > 0 and arm.last_rx_t > 0:
+                    if (time.time() - arm.last_rx_t) > args.arm_timeout_s:
+                        if time.time() - last_heartbeat > heartbeat_s:
+                            print(f"[WARN] No arm u01 packets for {time.time()-arm.last_rx_t:.2f}s on UDP :{args.udp_port}")
+                            last_heartbeat = time.time()
 
             # Optional: add leader shoulder_pan (servo 1, u01 center=0.5) as extra turning
             if args.wheel_pan_enable and u_arm is not None and 1 in u_arm:
@@ -954,19 +965,10 @@ def main():
             w = clamp(w, -MAX_W, MAX_W)
             esp.send_cmd(v, w)
 
-            # Arm state for logging (thread handles servo writes)
-            u_arm: Optional[Dict[int, float]] = None
-            if arm is not None:
-                u_arm = arm.get_last_u()
-                if recording and args.arm_timeout_s > 0 and arm.last_rx_t > 0:
-                    if (time.time() - arm.last_rx_t) > args.arm_timeout_s:
-                        if time.time() - last_heartbeat > heartbeat_s:
-                            print(f"[WARN] No arm u01 packets for {time.time()-arm.last_rx_t:.2f}s on UDP :{args.udp_port}")
-                            last_heartbeat = time.time()
-
             # Sensors
             dyaw_deg = imu.update_and_get_yaw_delta_deg()
             ax_g, ay_g, az_g = imu.read_accel_g()
+
 
             # Frames (black fallback always)
             frame_front_rgb = black_rgb_frame()
