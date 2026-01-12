@@ -493,7 +493,7 @@ class ArmFollowerU01:
             elif isinstance(k, int):
                 mid = k
 
-            if mid is None or mid not in self.ids:
+            if mid is None:
                 continue
 
             try:
@@ -552,8 +552,9 @@ class ArmFollowerU01:
                 if u_delta is None:
                     break
                 got_any = True
-                local_u.update(u_delta)
-                now_desired_u.update(u_delta)
+                now_desired_u.update(u_delta)  # includes servo1 even if not on bus
+                # only apply to actual follower servos for writing:
+                local_u.update({k: v for k, v in u_delta.items() if k in self.ids})
                 if not self.drain_all_udp:
                     break
 
@@ -726,15 +727,12 @@ class PreviewManagerDual:
         side_bgr = self._overlay(side_bgr, recording, episode_id, step_idx)
         cv2.imshow("side", side_bgr)
 
-        cv2.waitKey(1)
-
     def close(self):
         if self.enable:
             try:
                 cv2.destroyAllWindows()
             except Exception:
                 pass
-
 
 ########################################
 # Main
@@ -899,8 +897,8 @@ def main():
     print()
 
     recording = False
-    last_toggle_state = False
-    last_new_ep_state = False
+    rec_latch = False
+    ep_latch = False
 
     # Debounce to prevent instant double toggles
     debounce_s = 0.25
@@ -918,22 +916,23 @@ def main():
             # Pump ONCE per loop
             pygame.event.pump()
 
-            # Buttons with debounce
             btn_toggle = (js.get_button(BTN_TOGGLE_REC) == 1)
             btn_new_ep = (js.get_button(BTN_NEW_EPISODE) == 1)
-            now = time.time()
 
-            if btn_toggle and (not last_toggle_state) and ((now - last_toggle_t) > debounce_s):
+            if btn_toggle and (not rec_latch):
                 recording = not recording
-                last_toggle_t = now
+                rec_latch = True
                 print(f"Recording: {recording} (ep{logger.episode_id:03d})")
-            last_toggle_state = btn_toggle
+            elif (not btn_toggle) and rec_latch:
+                rec_latch = False
 
-            if btn_new_ep and (not last_new_ep_state) and ((now - last_new_ep_t) > debounce_s):
+            if btn_new_ep and (not ep_latch):
                 logger.start_new_episode()
-                last_new_ep_t = now
+                ep_latch = True
                 print(f"Episode changed: ep{logger.episode_id:03d}")
-            last_new_ep_state = btn_new_ep
+            elif (not btn_new_ep) and ep_latch:
+                ep_latch = False
+
 
             # Base drive
             lx, rx, turbo_val = read_gamepad_axes(js)
@@ -954,9 +953,11 @@ def main():
                         if time.time() - last_heartbeat > heartbeat_s:
                             print(f"[WARN] No arm u01 packets for {time.time()-arm.last_rx_t:.2f}s on UDP :{args.udp_port}")
                             last_heartbeat = time.time()
-
+            
             desired_u_arm: Optional[Dict[int, float]] = None
-            # Optional: add leader shoulder_pan (servo 1, u01 center=0.5) as extra turning
+            if arm is not None:
+                desired_u_arm = arm.get_last_desired_u()
+
             if args.wheel_pan_enable and desired_u_arm is not None and 1 in desired_u_arm:
                 u1 = float(desired_u_arm[1])  # [0..1], center=0.5
                 d = u1 - 0.5
@@ -965,7 +966,6 @@ def main():
                 if abs(d) < dz:
                     d_norm = 0.0
                 else:
-                    # remove deadzone and normalize to [-1..1]
                     d_norm = (abs(d) - dz) / (0.5 - dz) * (1.0 if d > 0 else -1.0)
 
                 w += d_norm * (MAX_W * float(args.wheel_pan_gain))
