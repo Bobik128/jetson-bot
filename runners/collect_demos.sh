@@ -4,7 +4,7 @@
   --arm-enable \
   --arm-port /dev/ttyACM0 \
   --udp-port 5005 \
-  --ids 2 3 4 6 \
+  --ids 1 2 3 4 6 \
   --follower_calib ./../data/calibrations/hand_calibration.json \
   --soft_margin 0.0 \
   --arm-hz 120 \
