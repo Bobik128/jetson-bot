@@ -901,7 +901,7 @@ def main():
     print("  ESC (in preview): exit")
     print()
 
-    recording = True
+    recording = False
     rec_latch = False
     ep_latch = False
 
@@ -913,26 +913,36 @@ def main():
         while True:
             t0 = time.time()
 
-            # Pump ONCE per loop
-            pygame.event.pump()
+            # Handle button presses as events (no latch needed)
+            events = pygame.event.get()
 
-            btn_toggle = (js.get_button(BTN_TOGGLE_REC) == 1)
-            btn_new_ep = (js.get_button(BTN_NEW_EPISODE) == 1)
+            # simple debounce (seconds)
+            DEBOUNCE_S = 0.20
+            if not hasattr(main, "_last_btn_t"):
+                main._last_btn_t = 0.0
 
-            if btn_toggle and (not rec_latch):
-                recording = not recording
-                rec_latch = True
-                print(f"Recording: {recording} (ep{logger.episode_id:03d})")
-            elif (not btn_toggle) and rec_latch:
-                rec_latch = False
+            now_t = time.time()
 
-            if btn_new_ep and (not ep_latch):
-                logger.start_new_episode()
-                ep_latch = True
-                print(f"Episode changed: ep{logger.episode_id:03d}")
-            elif (not btn_new_ep) and ep_latch:
-                ep_latch = False
+            for ev in events:
+                if ev.type == pygame.QUIT:
+                    raise KeyboardInterrupt
 
+                if ev.type == pygame.JOYBUTTONDOWN:
+                    # Optional: print what button index was pressed to verify mapping
+                    # print(f"[JOY] button down: {ev.button}")
+
+                    if (now_t - main._last_btn_t) < DEBOUNCE_S:
+                        continue  # ignore ultra-fast repeats/bounce
+
+                    if ev.button == BTN_TOGGLE_REC:
+                        recording = not recording
+                        main._last_btn_t = now_t
+                        print(f"Recording: {recording} (ep{logger.episode_id:03d})")
+
+                    elif ev.button == BTN_NEW_EPISODE:
+                        logger.start_new_episode()
+                        main._last_btn_t = now_t
+                        print(f"Episode changed: ep{logger.episode_id:03d}")
 
             # Base drive
             lx, rx, turbo_val = read_gamepad_axes(js)
