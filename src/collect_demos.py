@@ -675,7 +675,7 @@ class EpisodeLoggerDual:
         if u_arm is not None:
             record["u_arm"] = {str(k): float(clamp01(v)) for k, v in u_arm.items()}
 
-        print(record)
+        # print(record)
 
         self.meta_file.write(json.dumps(record) + "\n")
         self.step_idx += 1
@@ -901,7 +901,7 @@ def main():
     print("  ESC (in preview): exit")
     print()
 
-    recording = False
+    recording = True
     rec_latch = False
     ep_latch = False
 
