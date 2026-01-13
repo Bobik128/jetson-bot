@@ -929,7 +929,7 @@ def main():
 
                 if ev.type == pygame.JOYBUTTONDOWN:
                     # Optional: print what button index was pressed to verify mapping
-                    # print(f"[JOY] button down: {ev.button}")
+                    print(f"[JOY] button down: {ev.button}")
 
                     if (now_t - main._last_btn_t) < DEBOUNCE_S:
                         continue  # ignore ultra-fast repeats/bounce
