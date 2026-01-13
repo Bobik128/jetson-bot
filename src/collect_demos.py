@@ -675,6 +675,8 @@ class EpisodeLoggerDual:
         if u_arm is not None:
             record["u_arm"] = {str(k): float(clamp01(v)) for k, v in u_arm.items()}
 
+        print(record)
+
         self.meta_file.write(json.dumps(record) + "\n")
         self.step_idx += 1
 
@@ -902,11 +904,6 @@ def main():
     recording = False
     rec_latch = False
     ep_latch = False
-
-    # Debounce to prevent instant double toggles
-    debounce_s = 0.25
-    last_toggle_t = 0.0
-    last_new_ep_t = 0.0
 
     # Heartbeat printing
     last_heartbeat = time.time()
