@@ -31,7 +31,7 @@ DEADZONE = 0.20
 EXPO = 0.25
 
 USE_TURBO = True
-TURBO_AXIS = 4
+TURBO_AXIS = 3
 TURBO_MIN = 0.6
 TURBO_GAIN = 1.75
 
@@ -73,8 +73,11 @@ def init_gamepad():
 
 # IMPORTANT: no pygame.event.pump() here (pump ONCE per loop in main)
 def read_gamepad_axes(js):
+    # lx = js.get_axis(1)  # left stick vertical
+    # rx = js.get_axis(2)  # right stick horizontal
+
     lx = js.get_axis(1)  # left stick vertical
-    rx = js.get_axis(2)  # right stick horizontal
+    rx = js.get_axis(0)  # right stick horizontal
     lx = -lx
 
     lx = apply_deadzone(lx, DEADZONE)
