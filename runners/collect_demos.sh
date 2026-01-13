@@ -11,4 +11,4 @@
   --max_step 300 \
   --invert 6 \
   --arm-drain \
-  --wheel-pan-enable --wheel-pan-deadzone 0.08 --wheel-pan-gain 2
+  --wheel-pan-enable --wheel-pan-deadzone 0.12 --wheel-pan-gain 1.2
