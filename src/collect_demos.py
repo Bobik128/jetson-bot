@@ -61,6 +61,35 @@ def clamp(x, lo, hi):
 def clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
 
+class RateMeter:
+    """
+    Exponential-moving-average rate estimator.
+    Call tick() once per loop iteration. rate_hz is smoothed.
+    """
+    def __init__(self, alpha: float = 0.12):
+        self.alpha = float(alpha)
+        self.last_t = None
+        self.rate_hz = 0.0
+
+    def tick(self, now: float = None) -> float:
+        if now is None:
+            now = time.time()
+        if self.last_t is None:
+            self.last_t = now
+            return self.rate_hz
+
+        dt = now - self.last_t
+        self.last_t = now
+        if dt <= 1e-9:
+            return self.rate_hz
+
+        inst = 1.0 / dt
+        if self.rate_hz <= 0.0:
+            self.rate_hz = inst
+        else:
+            self.rate_hz = (1.0 - self.alpha) * self.rate_hz + self.alpha * inst
+        return self.rate_hz
+
 def init_gamepad():
     pygame.init()
     pygame.joystick.init()
@@ -73,9 +102,6 @@ def init_gamepad():
 
 # IMPORTANT: no pygame.event.pump() here (pump ONCE per loop in main)
 def read_gamepad_axes(js):
-    # lx = js.get_axis(1)  # left stick vertical
-    # rx = js.get_axis(2)  # right stick horizontal
-
     lx = js.get_axis(1)  # left stick vertical
     rx = js.get_axis(0)  # right stick horizontal
     lx = -lx
@@ -103,7 +129,7 @@ def map_range(x, in_min, in_max, out_min, out_max):
 
 def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) -> Dict[int, float]:
     """
-    Keep-out/collision-avoidance remap (your function) integrated.
+    Keep-out/collision-avoidance remap integrated.
     Expects u_by_id to contain at least ids 2,3,4. Other ids pass through unchanged.
     """
     import math
@@ -319,14 +345,10 @@ class ArmFollowerU01:
       - Applies keepout remap_values_to_zone()
       - Writes servo goals at --arm-hz regardless of camera/logging load
       - Drains UDP queue to avoid backlog lag
-
-    Use:
-      arm = ArmFollowerU01(...)
-      u_arm = arm.get_last_u()   # for logging
     """
 
     NAME_TO_ID = {
-        "shoulder_pan": 1,     # <-- add this
+        "shoulder_pan": 1,
         "shoulder_lift": 2,
         "elbow_flex": 3,
         "wrist_flex": 4,
@@ -377,6 +399,10 @@ class ArmFollowerU01:
         self.eeprom_limits: Dict[int, Tuple[int, int]] = {}
         self.map_limits: Dict[int, Tuple[int, int]] = {}
 
+        # Public loop frequency for UI
+        self._rate = RateMeter(alpha=0.12)
+        self.loop_hz = 0.0
+
         active_ids: List[int] = []
         for mid in self.ids:
             try:
@@ -413,20 +439,15 @@ class ArmFollowerU01:
         for mid in self.ids:
             self.bus.write1(mid, CTRL_TABLE["Torque_Enable"][0], 1)
 
-        # Re-init command state dicts to match filtered ids
-        self.last_u_by_id = {mid: 0.5 for mid in self.ids}
-        self.last_desired_u_by_id = {mid: 0.5 for mid in self.NAME_TO_ID.values()}
-        self.q_cmd = {mid: None for mid in self.ids}
-
-
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("0.0.0.0", int(udp_port)))
-        self.sock.settimeout(max(0.001, float(sock_timeout)))
-
+        # Command/telemetry state
         self.last_u_by_id: Dict[int, float] = {mid: 0.5 for mid in self.ids}
         self.last_desired_u_by_id: Dict[int, float] = {mid: 0.5 for mid in self.NAME_TO_ID.values()}
         self.last_rx_t: float = 0.0
         self.q_cmd: Dict[int, Optional[int]] = {mid: None for mid in self.ids}
+
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("0.0.0.0", int(udp_port)))
+        self.sock.settimeout(max(0.001, float(sock_timeout)))
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -461,10 +482,14 @@ class ArmFollowerU01:
     def get_last_u(self) -> Dict[int, float]:
         with self._lock:
             return dict(self.last_u_by_id)
-        
+
     def get_last_desired_u(self) -> Dict[int, float]:
         with self._lock:
             return dict(self.last_desired_u_by_id)
+
+    def get_loop_hz(self) -> float:
+        # simple getter to avoid external touching internals
+        return float(getattr(self, "loop_hz", 0.0))
 
     def _poll_one_udp(self) -> Optional[Dict[int, float]]:
         try:
@@ -556,7 +581,6 @@ class ArmFollowerU01:
                     break
                 got_any = True
                 now_desired_u.update(u_delta)  # includes servo1 even if not on bus
-                # only apply to actual follower servos for writing:
                 local_u.update({k: v for k, v in u_delta.items() if k in self.ids})
                 if not self.drain_all_udp:
                     break
@@ -564,7 +588,7 @@ class ArmFollowerU01:
             if got_any:
                 self.last_rx_t = time.time()
 
-            # Apply keep-out remap on full state
+            # Apply keep-out remap
             local_u = remap_values_to_zone(local_u, verbose=self.verbose)
 
             # Publish latest u for logger
@@ -574,6 +598,10 @@ class ArmFollowerU01:
 
             # Write servos
             self._step_write_servos(local_u)
+
+            # Update loop Hz (once per tick)
+            hz = self._rate.tick()
+            self.loop_hz = hz
 
             # Rate keeping (resync if late)
             next_t += self.dt
@@ -675,8 +703,6 @@ class EpisodeLoggerDual:
         if u_arm is not None:
             record["u_arm"] = {str(k): float(clamp01(v)) for k, v in u_arm.items()}
 
-        # print(record)
-
         self.meta_file.write(json.dumps(record) + "\n")
         self.step_idx += 1
 
@@ -701,35 +727,50 @@ class PreviewManagerDual:
             cv2.resizeWindow("side",  self.preview_size[0], self.preview_size[1])
 
     @staticmethod
-    def _overlay(frame_bgr, recording: bool, episode_id: int, step_idx: int):
+    def _overlay(frame_bgr, recording: bool, episode_id: int, step_idx: int, lines: Optional[List[str]] = None):
         state = "REC" if recording else "PAUSED"
         label = f"{state}  ep{episode_id:03d}  step{step_idx:06d}"
         color = (0, 0, 255) if recording else (0, 255, 255)
 
+        y = 30
         cv2.putText(
             frame_bgr,
             label,
-            (10, 30),
+            (10, y),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             color,
             2,
             cv2.LINE_AA,
         )
+
+        if lines:
+            for i, txt in enumerate(lines):
+                y2 = y + 28 * (i + 1)
+                cv2.putText(
+                    frame_bgr,
+                    txt,
+                    (10, y2),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
         return frame_bgr
 
-    def update(self, frame_front_rgb, frame_side_rgb, recording: bool, episode_id: int, step_idx: int):
+    def update(self, frame_front_rgb, frame_side_rgb, recording: bool, episode_id: int, step_idx: int, lines: Optional[List[str]] = None):
         if not self.enable:
             return
 
         front_bgr = cv2.cvtColor(frame_front_rgb, cv2.COLOR_RGB2BGR)
         front_bgr = cv2.resize(front_bgr, self.preview_size, interpolation=cv2.INTER_LINEAR)
-        front_bgr = self._overlay(front_bgr, recording, episode_id, step_idx)
+        front_bgr = self._overlay(front_bgr, recording, episode_id, step_idx, lines=lines)
         cv2.imshow("front", front_bgr)
 
         side_bgr = cv2.cvtColor(frame_side_rgb, cv2.COLOR_RGB2BGR)
         side_bgr = cv2.resize(side_bgr, self.preview_size, interpolation=cv2.INTER_LINEAR)
-        side_bgr = self._overlay(side_bgr, recording, episode_id, step_idx)
+        side_bgr = self._overlay(side_bgr, recording, episode_id, step_idx, lines=lines)
         cv2.imshow("side", side_bgr)
 
     def close(self):
@@ -738,6 +779,7 @@ class PreviewManagerDual:
                 cv2.destroyAllWindows()
             except Exception:
                 pass
+
 
 ########################################
 # Main
@@ -787,14 +829,13 @@ def main():
     parser.add_argument("--arm-verbose", action="store_true")
     parser.add_argument("--arm-drain", action="store_true", help="Drain all pending UDP packets each arm tick (reduces lag).")
     parser.add_argument("--arm-timeout-s", type=float, default=1.0)
-    
-    parser.add_argument("--wheel-pan-enable", action="store_true",
-                    help="Add leader servo1/shoulder_pan (u01, center=0.5) as extra wheel turn input.")
-    parser.add_argument("--wheel-pan-deadzone", type=float, default=0.06,
-                    help="Deadzone around u=0.5 for servo1 -> turn.")
-    parser.add_argument("--wheel-pan-gain", type=float, default=1.0,
-                    help="Gain multiplier for servo1 contribution to angular velocity (scaled by MAX_W).")
 
+    parser.add_argument("--wheel-pan-enable", action="store_true",
+                        help="Add leader servo1/shoulder_pan (u01, center=0.5) as extra wheel turn input.")
+    parser.add_argument("--wheel-pan-deadzone", type=float, default=0.06,
+                        help="Deadzone around u=0.5 for servo1 -> turn.")
+    parser.add_argument("--wheel-pan-gain", type=float, default=1.0,
+                        help="Gain multiplier for servo1 contribution to angular velocity (scaled by MAX_W).")
 
     args = parser.parse_args()
 
@@ -902,16 +943,20 @@ def main():
     print()
 
     recording = False
-    rec_latch = False
-    ep_latch = False
 
     # Heartbeat printing
     last_heartbeat = time.time()
     heartbeat_s = 2.0
 
+    # Loop frequency meters (for overlay)
+    main_rate = RateMeter(alpha=0.12)  # whole main loop
+    log_rate  = RateMeter(alpha=0.12)  # only ticks when recording
+
     try:
         while True:
             t0 = time.time()
+
+            loop_hz = main_rate.tick()
 
             # Handle button presses as events (no latch needed)
             events = pygame.event.get()
@@ -928,11 +973,10 @@ def main():
                     raise KeyboardInterrupt
 
                 if ev.type == pygame.JOYBUTTONDOWN:
-                    # Optional: print what button index was pressed to verify mapping
                     print(f"[JOY] button down: {ev.button}")
 
                     if (now_t - main._last_btn_t) < DEBOUNCE_S:
-                        continue  # ignore ultra-fast repeats/bounce
+                        continue
 
                     if ev.button == BTN_TOGGLE_REC:
                         recording = not recording
@@ -963,7 +1007,7 @@ def main():
                         if time.time() - last_heartbeat > heartbeat_s:
                             print(f"[WARN] No arm u01 packets for {time.time()-arm.last_rx_t:.2f}s on UDP :{args.udp_port}")
                             last_heartbeat = time.time()
-            
+
             desired_u_arm: Optional[Dict[int, float]] = None
             if arm is not None:
                 desired_u_arm = arm.get_last_desired_u()
@@ -986,7 +1030,6 @@ def main():
             # Sensors
             dyaw_deg = imu.update_and_get_yaw_delta_deg()
             ax_g, ay_g, az_g = imu.read_accel_g()
-
 
             # Frames (black fallback always)
             frame_front_rgb = black_rgb_frame()
@@ -1018,9 +1061,21 @@ def main():
                     v, w,
                     u_arm=u_arm
                 )
+                log_hz = log_rate.tick()
+            else:
+                log_hz = 0.0  # show 0 when paused (change to log_rate.rate_hz if you prefer)
+
+            # Build overlay lines (Hz)
+            arm_hz = arm.get_loop_hz() if arm is not None else 0.0
+            overlay_lines = [
+                f"main: {loop_hz:5.1f} Hz",
+                f"log:  {log_hz:5.1f} Hz",
+            ]
+            if arm is not None:
+                overlay_lines.append(f"arm:  {arm_hz:5.1f} Hz")
 
             # Preview
-            pv.update(frame_front_rgb, frame_side_rgb, recording, logger.episode_id, logger.step_idx)
+            pv.update(frame_front_rgb, frame_side_rgb, recording, logger.episode_id, logger.step_idx, lines=overlay_lines)
 
             # Exit via ESC if preview enabled
             if args.preview:
