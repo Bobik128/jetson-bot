@@ -6,8 +6,8 @@
   --ids 1 2 3 4 6 \
   --follower_calib ./../data/calibrations/hand_calibration.json \
   --soft_margin 0.0 \
-  --arm-hz 120 \
+  --arm-hz 60 \
   --max_step 300 \
   --invert 6 \
   --arm-drain \
-  --wheel-pan-enable --wheel-pan-deadzone 0.12 --wheel-pan-gain 1.2
+  --wheel-pan-enable --wheel-pan-deadzone 0.12 --wheel-pan-gain 0
