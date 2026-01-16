@@ -7,7 +7,7 @@
   --follower_calib ./../data/calibrations/hand_calibration.json \
   --soft_margin 0.0 \
   --arm-hz 40 \
-  --max_step 300 \
+  --max_step 120 \
   --invert 6 \
   --arm-drain \
   --wheel-pan-enable --wheel-pan-deadzone 0.12 --wheel-pan-gain 0
