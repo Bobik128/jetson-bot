@@ -1,6 +1,5 @@
 /usr/bin/python3 ./../src/collect_demos.py \
   --preview --preview-height 540 --preview-width 920 \
-  --disable-side-cam \
   --arm-enable \
   --arm-port /dev/ttyACM0 \
   --udp-port 5005 \
