@@ -576,7 +576,7 @@ class ArmFollowerU01:
 
         for mid, pos in goals.items():
             raw = encode_sign_magnitude(pos, SIGN_BITS["Goal_Position"])
-            ok, err = self.bus.write2_fast(mid, CTRL_TABLE["Goal_Position"][0], raw)
+            ok, err = self.bus.write2(mid, CTRL_TABLE["Goal_Position"][0], raw)
             if not ok and self.verbose:
                 print(f"[arm][WARN] fast write goal failed ID {mid}: {err}", file=sys.stderr)
 

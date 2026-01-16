@@ -6,7 +6,7 @@
   --ids 1 2 3 4 6 \
   --follower_calib ./../data/calibrations/hand_calibration.json \
   --soft_margin 0.0 \
-  --arm-hz 60 \
+  --arm-hz 44 \
   --max_step 300 \
   --invert 6 \
   --arm-drain \
