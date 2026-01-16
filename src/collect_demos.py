@@ -313,6 +313,19 @@ class Bus:
                 return False, self.packet_handler.getRxPacketError(err)
             return True, ""
         except Exception as e:
+            return False,
+
+    def write2_fast(self, mid: int, addr: int, val: int) -> Tuple[bool, str]:
+        """
+        Fast write: TxOnly (no response wait). Great for high-rate Goal_Position.
+        """
+        try:
+            # returns COMM_* result
+            comm = self.packet_handler.write2ByteTxOnly(self.port_handler, mid, addr, int(val))
+            if comm != scs.COMM_SUCCESS:
+                return False, self.packet_handler.getTxRxResult(comm)
+            return True, ""
+        except Exception as e:
             return False, str(e)
 
     def read2(self, mid: int, addr: int) -> int:
@@ -563,9 +576,9 @@ class ArmFollowerU01:
 
         for mid, pos in goals.items():
             raw = encode_sign_magnitude(pos, SIGN_BITS["Goal_Position"])
-            ok, err = self.bus.write2(mid, CTRL_TABLE["Goal_Position"][0], raw)
+            ok, err = self.bus.write2_fast(mid, CTRL_TABLE["Goal_Position"][0], raw)
             if not ok and self.verbose:
-                print(f"[arm][WARN] write goal failed ID {mid}: {err}", file=sys.stderr)
+                print(f"[arm][WARN] fast write goal failed ID {mid}: {err}", file=sys.stderr)
 
     def _run(self):
         next_t = time.time()
