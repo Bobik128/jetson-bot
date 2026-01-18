@@ -1096,6 +1096,12 @@ def main():
             if arm is not None:
                 overlay_lines.append(f"arm:  {arm_hz:5.1f} Hz")
 
+            
+            tel_v, tel_w, age = esp.get_latest()
+            
+            overlay_lines.append(f"tel_v:  {tel_v:6.5}")
+            overlay_lines.append(f"tel_W:  {tel_w:6.5}")
+
             # Preview
             pv.update(frame_front_rgb, frame_side_rgb, recording, logger.episode_id, logger.step_idx, lines=overlay_lines)
 
