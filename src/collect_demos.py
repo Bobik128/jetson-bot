@@ -857,7 +857,7 @@ def main():
     args = parser.parse_args()
 
     session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = os.path.join("../data", session_id)
+    base_dir = os.path.join("../data/training", session_id)
     os.makedirs(base_dir, exist_ok=True)
 
     preview_size = (args.preview_width, args.preview_height)
