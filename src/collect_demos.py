@@ -674,6 +674,8 @@ class EpisodeLoggerDual:
         az_g,
         v,
         w,
+        tel_v,
+        tel_w,
         u_arm: Optional[Dict[int, float]] = None,
     ):
         ts = time.time()
@@ -711,6 +713,8 @@ class EpisodeLoggerDual:
             "az_g": float(az_g),
             "v": float(v),
             "w": float(w),
+            "tel_v": float(tel_v),
+            "tel_w": float(tel_w),
         }
 
         if u_arm is not None:
@@ -869,6 +873,7 @@ def main():
     # Base
     print("[1/7] Init ESP32 serial link...")
     esp = ESP32Link(port=args.port, baud=args.baud)
+    esp.start_reader()
 
     # IMU
     print("[2/7] Init IMU...")
@@ -1068,10 +1073,14 @@ def main():
 
             # Log
             if recording:
+                tel_v, tel_w, age = esp.get_latest()
+                if age is None:
+                    raise RuntimeError("No ESP telemetry received")
+                
                 logger.log_step(
                     frame_front_rgb, frame_side_rgb,
                     dyaw_deg, ax_g, ay_g, az_g,
-                    v, w,
+                    v, w, tel_v, tel_w,
                     u_arm=u_arm
                 )
                 log_hz = log_rate.tick()
