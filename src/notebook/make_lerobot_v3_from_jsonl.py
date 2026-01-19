@@ -129,6 +129,10 @@ class EpisodeMeta:
     video_side_from_index: int
     video_side_to_index: int
 
+    video_front_from_timestamp: float
+    video_front_to_timestamp: float
+    video_side_from_timestamp: float
+    video_side_to_timestamp: float
 
 # -------------------------
 # Main conversion
@@ -157,8 +161,8 @@ def convert(
 
     # Paths
     data_dir = os.path.join(out_root, "data", "chunk-000")
-    vid_front_dir = os.path.join(out_root, "videos", "front", "chunk-000")
-    vid_side_dir = os.path.join(out_root, "videos", "side", "chunk-000")
+    vid_front_dir = os.path.join(out_root, "videos", "observation.images.front", "chunk-000")
+    vid_side_dir  = os.path.join(out_root, "videos", "observation.images.side",  "chunk-000")
     meta_dir = os.path.join(out_root, "meta")
     meta_ep_dir = os.path.join(meta_dir, "episodes", "chunk-000")
 
@@ -218,6 +222,10 @@ def convert(
             continue
 
         ep_len = len(records)
+        
+        ep_ts_from = float(records[0].get("t", 0.0))
+        ep_ts_to   = float(records[-1].get("t", ep_ts_from))
+
 
         # Episode offsets (videos and dataset are aligned here: 1 frame row == 1 video frame)
         ep_dataset_from = global_index
@@ -351,14 +359,21 @@ def convert(
             dataset_to_index=ep_dataset_to,
             data_chunk_index=0,
             data_file_index=0,
+
             video_front_chunk_index=0,
             video_front_file_index=0,
             video_front_from_index=ep_front_from,
             video_front_to_index=ep_front_to,
+
             video_side_chunk_index=0,
             video_side_file_index=0,
             video_side_from_index=ep_side_from,
             video_side_to_index=ep_side_to,
+
+            video_front_from_timestamp=ep_ts_from,
+            video_front_to_timestamp=ep_ts_to,
+            video_side_from_timestamp=ep_ts_from,
+            video_side_to_timestamp=ep_ts_to,
         ))
 
         total_episodes += 1
@@ -415,14 +430,21 @@ def convert(
         "dataset_to_index": e.dataset_to_index,
         "data/chunk_index": e.data_chunk_index,
         "data/file_index": e.data_file_index,
-        "videos/front/chunk_index": e.video_front_chunk_index,
-        "videos/front/file_index": e.video_front_file_index,
-        "videos/front/video_from_index": e.video_front_from_index,
-        "videos/front/video_to_index": e.video_front_to_index,
-        "videos/side/chunk_index": e.video_side_chunk_index,
-        "videos/side/file_index": e.video_side_file_index,
-        "videos/side/video_from_index": e.video_side_from_index,
-        "videos/side/video_to_index": e.video_side_to_index,
+
+        "videos/observation.images.front/chunk_index": e.video_front_chunk_index,
+        "videos/observation.images.front/file_index": e.video_front_file_index,
+        "videos/observation.images.front/video_from_index": e.video_front_from_index,
+        "videos/observation.images.front/video_to_index": e.video_front_to_index,
+        "videos/observation.images.front/from_timestamp": e.video_front_from_timestamp,
+        "videos/observation.images.front/to_timestamp": e.video_front_to_timestamp,
+
+        "videos/observation.images.side/chunk_index": e.video_side_chunk_index,
+        "videos/observation.images.side/file_index": e.video_side_file_index,
+        "videos/observation.images.side/video_from_index": e.video_side_from_index,
+        "videos/observation.images.side/video_to_index": e.video_side_to_index,
+        "videos/observation.images.side/from_timestamp": e.video_side_from_timestamp,
+        "videos/observation.images.side/to_timestamp": e.video_side_to_timestamp,
+
     } for e in episodes_meta])
     pq.write_table(pa.Table.from_pandas(ep_df, preserve_index=False), meta_episodes_path)
 
@@ -441,8 +463,23 @@ def convert(
     stats = {
         "action": compute_stats(action_arr),
         "observation.state": compute_stats(obs_arr),
-        # keep others optional; LeRobot uses stats for normalization pipelines
+
+        # Visual stats: LeRobot expects these keys to exist.
+        # Use ImageNet mean/std (RGB) and dummy min/max.
+        "observation.images.front": {
+            "mean": [0.485, 0.456, 0.406],
+            "std":  [0.229, 0.224, 0.225],
+            "min":  [0.0, 0.0, 0.0],
+            "max":  [1.0, 1.0, 1.0],
+        },
+        "observation.images.side": {
+            "mean": [0.485, 0.456, 0.406],
+            "std":  [0.229, 0.224, 0.225],
+            "min":  [0.0, 0.0, 0.0],
+            "max":  [1.0, 1.0, 1.0],
+        },
     }
+    
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2)
 
@@ -528,13 +565,13 @@ def convert(
                     "has_audio": False,
                 },
             },
-            "timestamp":    {"dtype": "float32", "shape": [], "names": None},
-            "frame_index":  {"dtype": "int64",   "shape": [], "names": None},
-            "episode_index":{"dtype": "int64",   "shape": [], "names": None},
-            "index":        {"dtype": "int64",   "shape": [], "names": None},
-            "task_index":   {"dtype": "int64",   "shape": [], "names": None},
-            "next.reward":  {"dtype": "float32", "shape": [], "names": None},
-            "next.done":    {"dtype": "bool",    "shape": [], "names": None},
+            "timestamp":    {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index":  {"dtype": "int64",   "shape": [1], "names": None},
+            "episode_index":{"dtype": "int64",   "shape": [1], "names": None},
+            "index":        {"dtype": "int64",   "shape": [1], "names": None},
+            "task_index":   {"dtype": "int64",   "shape": [1], "names": None},
+            "next.reward":  {"dtype": "float32", "shape": [1], "names": None},
+            "next.done":    {"dtype": "bool",    "shape": [1], "names": None},
         },
     }
 
