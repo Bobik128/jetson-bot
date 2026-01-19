@@ -1,0 +1,12 @@
+lerobot-train \
+  --dataset.repo_id=my_bot_v3 \
+  --dataset.root=../../data/my_bot_v3 \
+  --policy.type=act \
+  --policy.device=cpu \
+  --policy.push_to_hub=false \
+  --wandb.enable=false \
+  --output_dir=../../data/outputs/train/act_my_bot_v3_run1 \
+  --job_name=act_my_bot_v3_run1 \
+  --steps=50000 \
+  --save_freq=5000 \
+  --log_freq=200
