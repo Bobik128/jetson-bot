@@ -388,14 +388,16 @@ class ArmControllerU01:
             with self._lock:
                 local_u = dict(self._target_u)
 
-            # Apply keep-out remap
+            # SAFETY: Apply keep-out remap every tick (mandatory)
             local_u = remap_values_to_zone(local_u, verbose=self.verbose)
 
             # publish last_u for UI/logging
             with self._lock:
                 self._last_u = dict(local_u)
 
+            # Write servos (after safety remap)
             self._step_write_servos(local_u)
+
             self.loop_hz = self._rate.tick()
 
             next_t += self.dt
