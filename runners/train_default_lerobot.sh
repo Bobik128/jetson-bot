@@ -4,7 +4,7 @@ lerobot-train \
   --policy.type=act \
   --policy.device=cpu \
   --policy.push_to_hub=false \
-  --wandb.enable=false \
+  --wandb.enable=true \
   --output_dir=../data/outputs/train/act_my_bot_v3_run1 \
   --job_name=act_my_bot_v3_run1 \
   --steps=50000 \
