@@ -218,14 +218,14 @@ def convert(
                 continue
             valid.append(r)
         records = valid
+        t0 = float(records[0].get("t", 0.0))
         if not records:
             continue
 
         ep_len = len(records)
         
-        ep_ts_from = float(records[0].get("t", 0.0))
-        ep_ts_to   = float(records[-1].get("t", ep_ts_from))
-
+        ep_ts_from = 0.0
+        ep_ts_to = float(ep_len - 1) / float(fps)
 
         # Episode offsets (videos and dataset are aligned here: 1 frame row == 1 video frame)
         ep_dataset_from = global_index
@@ -277,7 +277,7 @@ def convert(
 
         # Build frame rows, write video frames
         for fi, r in enumerate(records):
-            ts = float(r.get("t", 0.0))
+            ts_rel = float(fi) / float(fps)
 
             # --- 6D action ---
             base_v = float(r.get("v", 0.0))
@@ -312,7 +312,7 @@ def convert(
             rows.append({
                 "action": action6,
                 "observation.state": obs_state6,
-                "timestamp": float(ts),
+                "timestamp": float(ts_rel),
                 "episode_index": int(total_episodes),
                 "frame_index": int(fi),
                 "index": int(global_index),
