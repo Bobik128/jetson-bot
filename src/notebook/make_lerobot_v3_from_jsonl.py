@@ -383,20 +383,18 @@ def convert(
     action_arr = np.stack([r["action"] for r in rows], axis=0).astype(np.float32)         # (N,6)
     obs_arr = np.stack([r["observation.state"] for r in rows], axis=0).astype(np.float32)# (N,6)
 
-    # Scalars (stored as shape (1,) arrays above; flatten to scalar columns or keep as list(1))
-    # LeRobot info.json example uses shape [1] for these; we store them as scalars but define feature shape [1].
-    # To match shape [1], we store as single-element fixed-size lists.
-    def fixed1_float(xs: List[np.ndarray]) -> pa.Array:
-        a = np.array([float(x[0]) for x in xs], dtype=np.float32)
-        return pa.FixedSizeListArray.from_arrays(pa.array(a), 1)
+    # --- fixed-size-list[1] helpers (LeRobot expects shape [1] for scalars in your version) ---
+    def f1_float(vals: List[float]) -> pa.Array:
+        a = pa.array([float(v) for v in vals], type=pa.float32())
+        return pa.FixedSizeListArray.from_arrays(a, 1)
 
-    def fixed1_int64(xs: List[np.ndarray]) -> pa.Array:
-        a = np.array([int(x[0]) for x in xs], dtype=np.int64)
-        return pa.FixedSizeListArray.from_arrays(pa.array(a), 1)
+    def f1_int64(vals: List[int]) -> pa.Array:
+        a = pa.array([int(v) for v in vals], type=pa.int64())
+        return pa.FixedSizeListArray.from_arrays(a, 1)
 
-    def fixed1_bool(xs: List[np.ndarray]) -> pa.Array:
-        a = np.array([bool(x[0]) for x in xs], dtype=np.bool_)
-        return pa.FixedSizeListArray.from_arrays(pa.array(a), 1)
+    def f1_bool(vals: List[bool]) -> pa.Array:
+        a = pa.array([bool(v) for v in vals], type=pa.bool_())
+        return pa.FixedSizeListArray.from_arrays(a, 1)
 
     table = pa.table({
         "action": pa.FixedSizeListArray.from_arrays(
@@ -405,13 +403,15 @@ def convert(
         "observation.state": pa.FixedSizeListArray.from_arrays(
             pa.array(obs_arr.reshape(-1), type=pa.float32()), 6
         ),
-        "timestamp": pa.array([r["timestamp"] for r in rows], type=pa.float32()),
-        "frame_index": pa.array([r["frame_index"] for r in rows], type=pa.int64()),
-        "episode_index": pa.array([r["episode_index"] for r in rows], type=pa.int64()),
-        "index": pa.array([r["index"] for r in rows], type=pa.int64()),
-        "task_index": pa.array([r["task_index"] for r in rows], type=pa.int64()),
-        "next.reward": pa.array([r["next.reward"] for r in rows], type=pa.float32()),
-        "next.done": pa.array([r["next.done"] for r in rows], type=pa.bool_()),
+
+        # These must be fixed_size_list[1] to match info.json shape [1]
+        "timestamp": f1_float([r["timestamp"] for r in rows]),
+        "frame_index": f1_int64([r["frame_index"] for r in rows]),
+        "episode_index": f1_int64([r["episode_index"] for r in rows]),
+        "index": f1_int64([r["index"] for r in rows]),
+        "task_index": f1_int64([r["task_index"] for r in rows]),
+        "next.reward": f1_float([r["next.reward"] for r in rows]),
+        "next.done": f1_bool([r["next.done"] for r in rows]),
     })
 
     pq.write_table(table, data_parquet_path)
@@ -541,13 +541,13 @@ def convert(
                     "has_audio": False,
                 },
             },
-            "timestamp": {"dtype": "float32", "shape": [], "names": None},
-            "frame_index": {"dtype": "int64", "shape": [], "names": None},
-            "episode_index": {"dtype": "int64", "shape": [], "names": None},
-            "index": {"dtype": "int64", "shape": [], "names": None},
-            "task_index": {"dtype": "int64", "shape": [], "names": None},
-            "next.reward": {"dtype": "float32", "shape": [], "names": None},
-            "next.done": {"dtype": "bool", "shape": [], "names": None},
+            "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+            "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+            "index": {"dtype": "int64", "shape": [1], "names": None},
+            "task_index": {"dtype": "int64", "shape": [1], "names": None},
+            "next.reward": {"dtype": "float32", "shape": [1], "names": None},
+            "next.done": {"dtype": "bool", "shape": [1], "names": None},
         },
     }
 
