@@ -7,4 +7,5 @@
   --capture-width 640 --capture-height 480 --capture-fps 30 \
   --arm-enable \
   --arm-port /dev/ttyACM0 --arm-baudrate 1000000 \
-  --follower_calib ../data/calibrations/hand_calibration.json
+  --follower_calib ../data/calibrations/hand_calibration.json \
+  --preview
