@@ -692,19 +692,6 @@ def main():
             }
 
             # Inference
-            print(
-                "DTYPES:",
-                "state", obs["observation.state"].dtype,
-                "front", obs["observation.images.front"].dtype,
-                "side", obs["observation.images.side"].dtype,
-            )
-            print(
-                "SHAPES:",
-                "state", tuple(obs["observation.state"].shape),
-                "front", tuple(obs["observation.images.front"].shape),
-                "side", tuple(obs["observation.images.side"].shape),
-            )
-
             with torch.no_grad():
                 assert obs["observation.state"].shape[-1] == 6, obs["observation.state"].shape
                 assert obs["observation.images.front"].dtype == torch.float32, obs["observation.images.front"].dtype
