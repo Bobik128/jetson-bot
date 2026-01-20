@@ -497,13 +497,8 @@ def frame_rgb_to_torch_chw_uint8(frame_rgb: np.ndarray, device: str) -> torch.Te
     return t
 
 def state_to_torch(state_vec: np.ndarray, device: str) -> torch.Tensor:
-    """
-    observation.state should be float32.
-    Shape: (1, D)
-    """
     state_vec = np.asarray(state_vec, dtype=np.float32).reshape(1, -1)
-    return torch.from_numpy(state_vec).to(device, dtype=torch.uint8, non_blocking=True)
-
+    return torch.from_numpy(state_vec).to(device=device, dtype=torch.float32, non_blocking=True)
 
 ############################################################
 # Main loop
