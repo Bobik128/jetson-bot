@@ -25,11 +25,36 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 # Small utilities
 ############################################################
 
+import math
+
+def is_finite(x: float) -> bool:
+    try:
+        return math.isfinite(float(x))
+    except Exception:
+        return False
+
+def safe_u01(x: float, default: float = 0.5) -> float:
+    """
+    Convert any garbage (None, NaN, inf, strings) to a safe [0..1] value.
+    """
+    try:
+        x = float(x)
+    except Exception:
+        return float(default)
+    if not math.isfinite(x):
+        return float(default)
+    # clamp into [0,1]
+    if x < 0.0:
+        return 0.0
+    if x > 1.0:
+        return 1.0
+    return float(x)
+
 def clamp(x: float, lo: float, hi: float) -> float:
     return hi if x > hi else lo if x < lo else x
 
 def clamp01(x: float) -> float:
-    return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+    return safe_u01(x, default=0.5)
 
 def map_range(x, in_min, in_max, out_min, out_max):
     if in_max == in_min:
@@ -383,7 +408,7 @@ class ArmControllerU01:
         with self._lock:
             for mid, u in u_by_id.items():
                 if mid in self._target_u:
-                    self._target_u[mid] = clamp01(float(u))
+                    self._target_u[mid] = safe_u01(u, default=self._target_u.get(mid, 0.5))
 
     def get_last_u(self) -> Dict[int, float]:
         with self._lock:
@@ -396,7 +421,7 @@ class ArmControllerU01:
         goals: Dict[int, int] = {}
 
         for mid in self.ids:
-            u = float(u_by_id.get(mid, 0.5))
+            u = safe_u01(u_by_id.get(mid, 0.5), default=self._last_u.get(mid, 0.5))
 
             lo, hi = self.map_limits[mid]
             if mid == 6 and self.gr_override is not None:
@@ -445,6 +470,9 @@ class ArmControllerU01:
             # 2) ALWAYS keep-out remap (never skip)
             try:
                 remapped = remap_values_to_zone(local_u, verbose=self.verbose)
+                # sanitize remapped dict: enforce finite [0..1] for all controlled IDs
+                for mid in self.ids:
+                    remapped[mid] = safe_u01(remapped.get(mid, 0.5), default=self._last_u.get(mid, 0.5))
             except Exception as e:
                 if self.verbose:
                     print(f"[arm][WARN] remap_values_to_zone failed: {e}")
@@ -703,7 +731,16 @@ def main():
             if isinstance(act, torch.Tensor):
                 act_np = act.detach().float().cpu().numpy()
             else:
-                act_np = np.asarray(act, dtype=np.float32)
+                # Replace NaN/inf actions with safe defaults
+                act_np = np.asarray(act_np, dtype=np.float32)
+                bad = ~np.isfinite(act_np)
+                if bad.any():
+                    # safe fallback: stop wheels + neutral arm
+                    act_np[bad] = 0.0
+                    # arm channels default to 0.5
+                    for i in range(2, 6):
+                        if i < act_np.shape[0] and not np.isfinite(act_np[i]):
+                            act_np[i] = 0.5
 
             act_np = act_np.reshape(-1)
             if act_np.shape[0] != 6:
@@ -722,10 +759,10 @@ def main():
             # Arm u01 outputs assumed in [0..1]
             if arm is not None:
                 u = {
-                    arm_ids_out[0]: clamp01(float(act_np[2])),
-                    arm_ids_out[1]: clamp01(float(act_np[3])),
-                    arm_ids_out[2]: clamp01(float(act_np[4])),
-                    arm_ids_out[3]: clamp01(float(act_np[5])),
+                    arm_ids_out[0]: safe_u01(act_np[2], 0.5),
+                    arm_ids_out[1]: safe_u01(act_np[3], 0.5),
+                    arm_ids_out[2]: safe_u01(act_np[4], 0.5),
+                    arm_ids_out[3]: safe_u01(act_np[5], 0.5),
                 }
                 arm.set_target_u(u)
 
