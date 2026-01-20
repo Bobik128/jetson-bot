@@ -482,23 +482,20 @@ class ArmControllerU01:
 # LeRobot observation prep
 ############################################################
 
-def frame_rgb_to_torch_chw_uint8(frame_rgb: np.ndarray, device: str) -> torch.Tensor:
+def frame_rgb_to_torch_chw_float01(frame_rgb: np.ndarray, device: str) -> torch.Tensor:
     if frame_rgb is None:
         raise ValueError("frame_rgb is None")
-
-    # Ensure numpy dtype is uint8 (defensive)
     if frame_rgb.dtype != np.uint8:
         frame_rgb = frame_rgb.astype(np.uint8, copy=False)
 
-    # HWC -> CHW, keep uint8
     t = torch.from_numpy(frame_rgb).permute(2, 0, 1).contiguous()  # uint8 CHW
     t = t.unsqueeze(0)  # 1,C,H,W
-    t = t.to(device=device, dtype=torch.uint8, non_blocking=True)
+    t = t.to(device=device, dtype=torch.float32, non_blocking=True).div_(255.0)
     return t
 
 def state_to_torch(state_vec: np.ndarray, device: str) -> torch.Tensor:
     state_vec = np.asarray(state_vec, dtype=np.float32).reshape(1, -1)
-    return torch.from_numpy(state_vec).to(device=device, dtype=torch.float32, non_blocking=True)
+    return torch.from_numpy(state_vec).to(device, dtype=torch.float32, non_blocking=True)
 
 ############################################################
 # Main loop
@@ -623,6 +620,13 @@ def main():
     policy.eval()
     policy.to(device)
 
+    # FORCE vision path to float32 (fixes uint8/float confusion inside backbone)
+    try:
+        policy.model.backbone = policy.model.backbone.float()
+    except Exception:
+        pass
+    policy.model = policy.model.float()
+
     # Arm controller
     arm: Optional[ArmControllerU01] = None
     if args.arm_enable:
@@ -682,9 +686,9 @@ def main():
 
             # Convert to torch tensors
             obs = {
-                "observation.state": state_to_torch(state_vec, device),
-                "observation.images.front": frame_rgb_to_torch_chw_uint8(front_rgb, device),
-                "observation.images.side": frame_rgb_to_torch_chw_uint8(side_rgb, device),
+                "observation.state": state_to_torch(state_vec, device),  # float32
+                "observation.images.front": frame_rgb_to_torch_chw_float01(front_rgb, device),
+                "observation.images.side": frame_rgb_to_torch_chw_float01(side_rgb, device),
             }
 
             # Inference
