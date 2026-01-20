@@ -476,8 +476,12 @@ def parse_args():
     p.add_argument("--baud", type=int, default=115200)
 
     # Cameras
-    p.add_argument("--front", default="/dev/video0")
-    p.add_argument("--side", default="/dev/video1")
+    p.add_argument("--base-dir", default=".", help="Used for GstCam debug dumps.")
+    p.add_argument("--front-sensor-id", type=int, default=0)
+    p.add_argument("--side-sensor-id", type=int, default=1)
+    p.add_argument("--capture-width", type=int, default=640)
+    p.add_argument("--capture-height", type=int, default=480)
+    p.add_argument("--capture-fps", type=int, default=30)
     p.add_argument("--disable-side", action="store_true")
     p.add_argument("--disable-front", action="store_true")
 
@@ -551,9 +555,24 @@ def main():
     cam_side = None
 
     if not args.disable_front:
-        cam_front = GstCam(args.front)
+        cam_front = GstCam(
+            base_dir=args.base_dir,
+            frame_size=FRAME_SIZE,
+            sensor_id=args.front_sensor_id,
+            capture_width=args.capture_width,
+            capture_height=args.capture_height,
+            capture_fps=args.capture_fps,
+        )
+
     if not args.disable_side:
-        cam_side = GstCam(args.side)
+        cam_side = GstCam(
+            base_dir=args.base_dir,
+            frame_size=FRAME_SIZE,
+            sensor_id=args.side_sensor_id,
+            capture_width=args.capture_width,
+            capture_height=args.capture_height,
+            capture_fps=args.capture_fps,
+        )
 
     # Load ACT policy
     # LeRobot exported checkpoints are typically in Hugging Face format.
