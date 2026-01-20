@@ -530,6 +530,8 @@ def parse_args():
     p.add_argument("--capture-fps", type=int, default=30)
     p.add_argument("--disable-side", action="store_true")
     p.add_argument("--disable-front", action="store_true")
+    p.add_argument("--debug-dir", default="../data", help="Directory for GstCam debug dumps (must be a real directory).")
+
 
     # Runtime
     p.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
@@ -663,9 +665,10 @@ def main():
             ax_g, ay_g, az_g = imu.read_accel_g()
 
             # Build observation.state
-            # Keep it exactly what you trained on. You used 4 values in your old policy:
-            # [dyaw_deg, ax_g, ay_g, az_g]
-            state_vec = np.array([dyaw_deg, ax_g, ay_g, az_g], dtype=np.float32)
+            tel_v, tel_w, age = esp.get_latest()
+            if age is None:
+                tel_v, tel_w = 0.0, 0.0
+            state_vec = np.array([dyaw_deg, ax_g, ay_g, az_g, tel_v, tel_w], dtype=np.float32)
 
             # Grab frames (RGB)
             # If camera is missing, fall back to black frame with FRAME_SIZE.
@@ -692,6 +695,10 @@ def main():
 
             # Inference
             with torch.no_grad():
+                assert obs["observation.state"].shape[-1] == 6, obs["observation.state"].shape
+                assert obs["observation.images.front"].shape[-2:] == (144, 256), obs["observation.images.front"].shape
+                assert obs["observation.images.side"].shape[-2:] == (144, 256), obs["observation.images.side"].shape
+
                 act = policy.select_action(obs)
 
             # Normalize shape: expect (1,6) or (6,)
