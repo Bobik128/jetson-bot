@@ -79,6 +79,52 @@ def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) ->
     finalX = x1 + x2 + x3
     finalY = y1 + y2 + y3
 
+    # ================= ROUNDED SDF =================
+    vx = max(finalX - bx, 0.0)
+    vy = max(finalY - by, 0.0)
+
+    dist_raw = math.hypot(vx, vy)
+    dist = dist_raw - fillet_r
+
+    if verbose:
+        print(f"[keepout] X={finalX:.3f}, Y={finalY:.3f}, sdf={dist:.3f}")
+
+    # ================= OUTSIDE KEEP-OUT =================
+    if dist > keepout_r:
+        return u_by_id
+
+    # ================= NORMAL =================
+    if dist_raw > 1e-9:
+        nx = vx / dist_raw
+        ny = vy / dist_raw
+    else:
+        nx = ny = 1.0 / math.sqrt(2.0)
+
+    # ================= PUSH =================
+    target = keepout_r + margin
+    push = target - dist
+    safeX = finalX + nx * push
+    safeY = finalY + ny * push
+
+    if verbose:
+        print(f"[keepout] -> safeX={safeX:.3f}, safeY={safeY:.3f}, push={push:.3f}")
+
+    # ================= IK =================
+    length = math.hypot(safeX - x3, safeY - y3)
+    if length < 1e-6:
+        return u_by_id
+
+    def _clamp(v):
+        return max(-1.0, min(1.0, v))
+
+    alpha2 = math.acos(_clamp((length * length + 11.6 * 11.6 - 10.5 * 10.5) / (2.0 * length * 11.6)))
+    beta = math.acos(_clamp((10.5 * 10.5 + 11.6 * 11.6 - length * length) / (2.0 * 10.5 * 11.6)))
+    alpha = math.atan2(safeY - y3, safeX - x3) + alpha2
+
+    out = dict(u_by_id)
+    out[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
+    out[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+    return out
 class RateMeter:
     """EMA loop Hz estimator."""
     def __init__(self, alpha: float = 0.12):
