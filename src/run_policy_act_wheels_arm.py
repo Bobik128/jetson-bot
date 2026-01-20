@@ -707,8 +707,8 @@ def main():
 
             with torch.no_grad():
                 assert obs["observation.state"].shape[-1] == 6, obs["observation.state"].shape
-                assert obs["observation.images.front"].dtype == torch.uint8, obs["observation.images.front"].dtype
-                assert obs["observation.images.side"].dtype == torch.uint8, obs["observation.images.side"].dtype
+                assert obs["observation.images.front"].dtype == torch.float32, obs["observation.images.front"].dtype
+                assert obs["observation.images.side"].dtype == torch.float32, obs["observation.images.side"].dtype
 
                 act = policy.select_action(obs)
 
