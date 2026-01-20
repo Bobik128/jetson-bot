@@ -311,8 +311,8 @@ class ArmControllerU01:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="ArmControllerU01", daemon=True)
 
-        self._target_u: Dict[int, float] = {mid: 0.5 for mid in self.ids}
-        self._last_u: Dict[int, float] = dict(self._target_u)
+        self._target_u = {mid: 0.5 for mid in self.ids}
+        self._last_u   = {mid: 0.5 for mid in self.ids}
         self.q_cmd: Dict[int, Optional[int]] = {mid: None for mid in self.ids}
 
         if self.verbose:
@@ -385,21 +385,45 @@ class ArmControllerU01:
     def _run(self):
         next_t = time.time()
         while not self._stop.is_set():
+            # 1) snapshot target safely
             with self._lock:
-                local_u = dict(self._target_u)
+                base = self._target_u
+                if not isinstance(base, dict):
+                    # fall back to last known safe command or neutral
+                    base = getattr(self, "_last_u", None)
+                    if not isinstance(base, dict):
+                        base = {mid: 0.5 for mid in self.ids}
 
-            # SAFETY: Apply keep-out remap every tick (mandatory)
-            local_u = remap_values_to_zone(local_u, verbose=self.verbose)
+                local_u = dict(base)
 
-            # publish last_u for UI/logging
+            # 2) ALWAYS keep-out remap (never skip)
+            try:
+                remapped = remap_values_to_zone(local_u, verbose=self.verbose)
+            except Exception as e:
+                if self.verbose:
+                    print(f"[arm][WARN] remap_values_to_zone failed: {e}")
+                remapped = local_u
+
+            # remap must return dict; if not, keep last safe
+            if not isinstance(remapped, dict):
+                if self.verbose:
+                    print("[arm][WARN] remap returned non-dict; keeping previous command")
+                with self._lock:
+                    prev = getattr(self, "_last_u", None)
+                    if isinstance(prev, dict):
+                        remapped = dict(prev)
+                    else:
+                        remapped = {mid: 0.5 for mid in self.ids}
+
+            # 3) publish last_u for UI/logging
             with self._lock:
-                self._last_u = dict(local_u)
+                self._last_u = dict(remapped)
 
-            # Write servos (after safety remap)
-            self._step_write_servos(local_u)
+            # 4) write servos
+            self._step_write_servos(remapped)
 
+            # 5) timing
             self.loop_hz = self._rate.tick()
-
             next_t += self.dt
             sleep_s = next_t - time.time()
             if sleep_s > 0:
