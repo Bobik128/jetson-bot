@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import cv2
 import torch
+import math
 
 import scservo_sdk as scs
 
@@ -17,40 +18,36 @@ from shared.constants import FRAME_SIZE, MAX_V, MAX_W
 from shared.esp32_link import ESP32Link
 from shared.imu_mpu6050 import MPU6050GyroYaw
 
-# LeRobot ACT policy
-# (This import path is consistent with LeRobot examples/snippets.)
 from lerobot.policies.act.modeling_act import ACTPolicy
 
+
 ############################################################
-# Small utilities
+# Numeric safety utilities
 ############################################################
 
-import math
-
-def is_finite(x: float) -> bool:
+def is_finite(x) -> bool:
     try:
         return math.isfinite(float(x))
     except Exception:
         return False
 
-def safe_u01(x: float, default: float = 0.5) -> float:
-    """
-    Convert any garbage (None, NaN, inf, strings) to a safe [0..1] value.
-    """
+def safe_float(x, default: float = 0.0) -> float:
     try:
-        x = float(x)
+        v = float(x)
     except Exception:
         return float(default)
-    if not math.isfinite(x):
-        return float(default)
-    # clamp into [0,1]
-    if x < 0.0:
+    return v if math.isfinite(v) else float(default)
+
+def safe_u01(x, default: float = 0.5) -> float:
+    v = safe_float(x, default=default)
+    if v < 0.0:
         return 0.0
-    if x > 1.0:
+    if v > 1.0:
         return 1.0
-    return float(x)
+    return v
 
 def clamp(x: float, lo: float, hi: float) -> float:
+    x = safe_float(x, default=0.0)
     return hi if x > hi else lo if x < lo else x
 
 def clamp01(x: float) -> float:
@@ -60,6 +57,11 @@ def map_range(x, in_min, in_max, out_min, out_max):
     if in_max == in_min:
         raise ValueError("in_min and in_max must be different")
     return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
+
+
+############################################################
+# KEEP-OUT REMAP (ALWAYS APPLIED IN ARM THREAD)
+############################################################
 
 def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) -> Dict[int, float]:
     """
@@ -81,9 +83,14 @@ def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) ->
     by = -0.6
 
     # ================= MAP INPUT =================
-    a_deg = map_range(u_by_id[2], 0, 0.25, 125, 90)
-    b_deg = map_range(u_by_id[3], 1, 0.66, 19, 90)
-    c_deg = map_range(u_by_id[4], 1, 0.47, 102, 180)
+    # Ensure inputs are finite and in [0..1]
+    u2 = safe_u01(u_by_id.get(2, 0.5), 0.5)
+    u3 = safe_u01(u_by_id.get(3, 0.5), 0.5)
+    u4 = safe_u01(u_by_id.get(4, 0.5), 0.5)
+
+    a_deg = map_range(u2, 0, 0.25, 125, 90)
+    b_deg = map_range(u3, 1, 0.66, 19, 90)
+    c_deg = map_range(u4, 1, 0.47, 102, 180)
 
     a = math.radians(a_deg)
     b = math.radians(b_deg)
@@ -149,7 +156,14 @@ def remap_values_to_zone(u_by_id: Dict[int, float], *, verbose: bool = False) ->
     out = dict(u_by_id)
     out[2] = clamp01(map_range(math.degrees(alpha), 125, 90, 0, 0.25))
     out[3] = clamp01(map_range(math.degrees(beta), 19, 90, 1, 0.66))
+    # NOTE: out[4] and out[6] pass through (but will be sanitized in the arm thread)
     return out
+
+
+############################################################
+# RateMeter
+############################################################
+
 class RateMeter:
     """EMA loop Hz estimator."""
     def __init__(self, alpha: float = 0.12):
@@ -176,7 +190,7 @@ class RateMeter:
 
 
 ############################################################
-# Arm control (your existing servo stack, but with direct set_target_u)
+# Arm control (Feetech STS via scservo_sdk) with always-on keepout
 ############################################################
 
 CTRL_TABLE = {
@@ -210,7 +224,7 @@ def soft_range(lo: int, hi: int, margin: float) -> Tuple[int, int]:
     return slo, shi
 
 def u_to_ticks(u: float, lo: int, hi: int, invert: bool, trim: int) -> int:
-    u = clamp01(u)
+    u = safe_u01(u, default=0.5)
     if invert:
         u = 1.0 - u
     raw = int(round(lo + u * (hi - lo)))
@@ -300,6 +314,10 @@ class ArmControllerU01:
     """
     Servo writer thread. You call set_target_u({2:..,3:..,4:..,6:..}).
     The thread runs at --arm-hz and pushes the latest target to the servos.
+
+    Safety:
+      - ALWAYS applies remap_values_to_zone()
+      - Sanitizes u values to finite [0..1]
     """
 
     def __init__(
@@ -460,43 +478,33 @@ class ArmControllerU01:
             with self._lock:
                 base = self._target_u
                 if not isinstance(base, dict):
-                    # fall back to last known safe command or neutral
                     base = getattr(self, "_last_u", None)
                     if not isinstance(base, dict):
                         base = {mid: 0.5 for mid in self.ids}
-
                 local_u = dict(base)
 
             # 2) ALWAYS keep-out remap (never skip)
             try:
                 remapped = remap_values_to_zone(local_u, verbose=self.verbose)
-                # sanitize remapped dict: enforce finite [0..1] for all controlled IDs
-                for mid in self.ids:
-                    remapped[mid] = safe_u01(remapped.get(mid, 0.5), default=self._last_u.get(mid, 0.5))
+                if not isinstance(remapped, dict):
+                    remapped = local_u
             except Exception as e:
                 if self.verbose:
                     print(f"[arm][WARN] remap_values_to_zone failed: {e}")
                 remapped = local_u
 
-            # remap must return dict; if not, keep last safe
-            if not isinstance(remapped, dict):
-                if self.verbose:
-                    print("[arm][WARN] remap returned non-dict; keeping previous command")
-                with self._lock:
-                    prev = getattr(self, "_last_u", None)
-                    if isinstance(prev, dict):
-                        remapped = dict(prev)
-                    else:
-                        remapped = {mid: 0.5 for mid in self.ids}
+            # 3) sanitize outputs for ALL ids
+            for mid in self.ids:
+                remapped[mid] = safe_u01(remapped.get(mid, 0.5), default=self._last_u.get(mid, 0.5))
 
-            # 3) publish last_u for UI/logging
+            # 4) publish last_u for UI/logging
             with self._lock:
                 self._last_u = dict(remapped)
 
-            # 4) write servos
+            # 5) write servos
             self._step_write_servos(remapped)
 
-            # 5) timing
+            # 6) timing
             self.loop_hz = self._rate.tick()
             next_t += self.dt
             sleep_s = next_t - time.time()
@@ -511,6 +519,9 @@ class ArmControllerU01:
 ############################################################
 
 def frame_rgb_to_torch_chw_float01(frame_rgb: np.ndarray, device: str) -> torch.Tensor:
+    """
+    Produces float32 [0..1] tensor: (1,3,H,W)
+    """
     if frame_rgb is None:
         raise ValueError("frame_rgb is None")
     if frame_rgb.dtype != np.uint8:
@@ -522,8 +533,12 @@ def frame_rgb_to_torch_chw_float01(frame_rgb: np.ndarray, device: str) -> torch.
     return t
 
 def state_to_torch(state_vec: np.ndarray, device: str) -> torch.Tensor:
+    """
+    observation.state must be float32: (1,6)
+    """
     state_vec = np.asarray(state_vec, dtype=np.float32).reshape(1, -1)
     return torch.from_numpy(state_vec).to(device, dtype=torch.float32, non_blocking=True)
+
 
 ############################################################
 # Main loop
@@ -534,7 +549,7 @@ def parse_args():
 
     # Policy / checkpoint
     p.add_argument("--policy-path", required=True,
-                   help="Path to LeRobot exported checkpoint dir (e.g. outputs/train/.../checkpoints/last/pretrained_model)")
+                   help="Path to LeRobot exported checkpoint dir (e.g. .../checkpoints/last/pretrained_model)")
 
     # Wheels
     p.add_argument("--port", default="/dev/ttyTHS1")
@@ -549,8 +564,7 @@ def parse_args():
     p.add_argument("--capture-fps", type=int, default=30)
     p.add_argument("--disable-side", action="store_true")
     p.add_argument("--disable-front", action="store_true")
-    p.add_argument("--debug-dir", default="../data", help="Directory for GstCam debug dumps (must be a real directory).")
-
+    p.add_argument("--debug-dir", default=".", help="Directory for GstCam debug dumps (must exist).")
 
     # Runtime
     p.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
@@ -578,7 +592,11 @@ def parse_args():
     # Preview
     p.add_argument("--preview", action="store_true")
 
+    # Debug prints
+    p.add_argument("--print-hz", type=float, default=1.0, help="Telemetry/action print rate (Hz).")
+
     return p.parse_args()
+
 
 def main():
     args = parse_args()
@@ -593,7 +611,6 @@ def main():
     dt_target = 1.0 / max(1.0, float(args.hz))
 
     # Parse action map
-    # Expected 6 tokens: first two are v,w, rest are servo IDs (or names)
     tokens = [t.strip() for t in args.action_map.split(",") if t.strip()]
     if len(tokens) != 6 or tokens[0] != "v" or tokens[1] != "w":
         raise RuntimeError("--action-map must look like: v,w,2,3,4,6 (6 entries, first two v,w).")
@@ -606,7 +623,6 @@ def main():
     # Init wheels link
     print("Init ESP32 link...")
     esp = ESP32Link(port=args.port, baud=args.baud)
-    # if your ESP32Link supports it, keep reader on:
     try:
         esp.start_reader()
     except Exception:
@@ -623,7 +639,7 @@ def main():
 
     if not args.disable_front:
         cam_front = GstCam(
-            base_dir=args.base_dir,
+            base_dir=args.debug_dir,
             frame_size=FRAME_SIZE,
             sensor_id=args.front_sensor_id,
             capture_width=args.capture_width,
@@ -633,7 +649,7 @@ def main():
 
     if not args.disable_side:
         cam_side = GstCam(
-            base_dir=args.base_dir,
+            base_dir=args.debug_dir,
             frame_size=FRAME_SIZE,
             sensor_id=args.side_sensor_id,
             capture_width=args.capture_width,
@@ -642,18 +658,20 @@ def main():
         )
 
     # Load ACT policy
-    # LeRobot exported checkpoints are typically in Hugging Face format.
     print("Load LeRobot ACT policy...")
     policy = ACTPolicy.from_pretrained(args.policy_path)
     policy.eval()
     policy.to(device)
 
-    # FORCE vision path to float32 (fixes uint8/float confusion inside backbone)
+    # Keep everything float32 to avoid dtype surprises
     try:
         policy.model.backbone = policy.model.backbone.float()
     except Exception:
         pass
-    policy.model = policy.model.float()
+    try:
+        policy.model = policy.model.float()
+    except Exception:
+        pass
 
     # Arm controller
     arm: Optional[ArmControllerU01] = None
@@ -681,82 +699,97 @@ def main():
 
     main_rate = RateMeter(alpha=0.12)
 
+    last_print_t = 0.0
+    print_dt = 1.0 / max(0.1, float(args.print_hz))
+
     try:
         while True:
             t0 = time.time()
             loop_hz = main_rate.tick()
 
-            # Read sensors
-            dyaw_deg = imu.update_and_get_yaw_delta_deg()
+            # IMU
+            dyaw_deg = safe_float(imu.update_and_get_yaw_delta_deg(), 0.0)
             ax_g, ay_g, az_g = imu.read_accel_g()
+            ax_g = safe_float(ax_g, 0.0)
+            ay_g = safe_float(ay_g, 0.0)
+            az_g = safe_float(az_g, 0.0)
 
-            # Build observation.state
+            # Telemetry
             tel_v, tel_w, age = esp.get_latest()
-            if age is None:
+            age = safe_float(age, 1e9) if age is not None else 1e9
+
+            # treat stale telemetry as zero
+            if age > 0.25:
                 tel_v, tel_w = 0.0, 0.0
+            tel_v = safe_float(tel_v, 0.0)
+            tel_w = safe_float(tel_w, 0.0)
+
+            # State vector (6 dims as your trained config expects)
             state_vec = np.array([dyaw_deg, ax_g, ay_g, az_g, tel_v, tel_w], dtype=np.float32)
 
-            # Grab frames (RGB)
-            # If camera is missing, fall back to black frame with FRAME_SIZE.
+            # Frames
             h, w = FRAME_SIZE[1], FRAME_SIZE[0]
             front_rgb = np.zeros((h, w, 3), dtype=np.uint8)
             side_rgb = np.zeros((h, w, 3), dtype=np.uint8)
 
             if cam_front is not None:
-                f = cam_front.get_frame_rgb()
-                if f is not None:
-                    front_rgb = f
+                try:
+                    f = cam_front.get_frame_rgb()
+                    if f is not None:
+                        front_rgb = f
+                except Exception:
+                    pass
 
             if cam_side is not None:
-                s = cam_side.get_frame_rgb()
-                if s is not None:
-                    side_rgb = s
+                try:
+                    s = cam_side.get_frame_rgb()
+                    if s is not None:
+                        side_rgb = s
+                except Exception:
+                    pass
 
-            # Convert to torch tensors
+            # Observation
             obs = {
-                "observation.state": state_to_torch(state_vec, device),  # float32
+                "observation.state": state_to_torch(state_vec, device),
                 "observation.images.front": frame_rgb_to_torch_chw_float01(front_rgb, device),
                 "observation.images.side": frame_rgb_to_torch_chw_float01(side_rgb, device),
             }
 
             # Inference
             with torch.no_grad():
-                assert obs["observation.state"].shape[-1] == 6, obs["observation.state"].shape
-                assert obs["observation.images.front"].dtype == torch.float32, obs["observation.images.front"].dtype
-                assert obs["observation.images.side"].dtype == torch.float32, obs["observation.images.side"].dtype
-
                 act = policy.select_action(obs)
 
-            # Normalize shape: expect (1,6) or (6,)
+            # Convert action to numpy float32
             if isinstance(act, torch.Tensor):
-                act_np = act.detach().float().cpu().numpy()
+                act_np = act.detach().cpu().numpy()
             else:
-                # Replace NaN/inf actions with safe defaults
-                act_np = np.asarray(act_np, dtype=np.float32)
-                bad = ~np.isfinite(act_np)
-                if bad.any():
-                    # safe fallback: stop wheels + neutral arm
-                    act_np[bad] = 0.0
-                    # arm channels default to 0.5
-                    for i in range(2, 6):
-                        if i < act_np.shape[0] and not np.isfinite(act_np[i]):
-                            act_np[i] = 0.5
+                act_np = np.asarray(act, dtype=np.float32)
 
-            act_np = act_np.reshape(-1)
+            act_np = act_np.astype(np.float32, copy=False).reshape(-1)
             if act_np.shape[0] != 6:
                 raise RuntimeError(f"Expected 6 action outputs, got shape {act_np.shape}")
 
-            # Map to wheel + arm
-            v = float(act_np[0])
-            w_cmd = float(act_np[1])
+            # HARD SAFETY: never allow NaN/inf through
+            bad = ~np.isfinite(act_np)
+            if bad.any():
+                act_np[0] = 0.0
+                act_np[1] = 0.0
+                act_np[2:6] = 0.5
+            else:
+                act_np[2:6] = np.clip(act_np[2:6], 0.0, 1.0)
 
-            v = clamp(v, -MAX_V, MAX_V)
-            w_cmd = clamp(w_cmd, -MAX_W, MAX_W)
+            # Wheel commands
+            v = clamp(act_np[0], -MAX_V, MAX_V)
+            w_cmd = clamp(act_np[1], -MAX_W, MAX_W)
+            if not is_finite(v):
+                v = 0.0
+            if not is_finite(w_cmd):
+                w_cmd = 0.0
 
             # Send wheels
             esp.send_cmd(v, w_cmd)
 
-            # Arm u01 outputs assumed in [0..1]
+            # Arm commands (u01)
             if arm is not None:
                 u = {
                     arm_ids_out[0]: safe_u01(act_np[2], 0.5),
@@ -766,14 +799,33 @@ def main():
                 }
                 arm.set_target_u(u)
 
+            # Debug prints
+            now = time.time()
+            if now - last_print_t >= print_dt:
+                last_print_t = now
+                if arm is not None:
+                    last_u = arm.get_last_u()
+                else:
+                    last_u = {}
+                print(
+                    f"[run] hz={loop_hz:5.1f} age={age:5.3f} "
+                    f"tel(v,w)=({tel_v:+.3f},{tel_w:+.3f}) "
+                    f"act(v,w)=({v:+.3f},{w_cmd:+.3f}) "
+                    f"arm_u={{{', '.join([f'{k}:{last_u.get(k,0.0):.3f}' for k in sorted(last_u.keys())])}}}"
+                )
+
             # Preview overlay
             if args.preview:
                 front_bgr = cv2.cvtColor(front_rgb, cv2.COLOR_RGB2BGR)
                 side_bgr = cv2.cvtColor(side_rgb, cv2.COLOR_RGB2BGR)
                 combined = cv2.hconcat([front_bgr, side_bgr])
-                txt = f"hz={loop_hz:5.1f} v={v:+.2f} w={w_cmd:+.2f} a={act_np[2]:.2f},{act_np[3]:.2f},{act_np[4]:.2f},{act_np[5]:.2f}"
+                txt = (
+                    f"hz={loop_hz:5.1f} v={v:+.2f} w={w_cmd:+.2f} "
+                    f"a={act_np[2]:.2f},{act_np[3]:.2f},{act_np[4]:.2f},{act_np[5]:.2f} "
+                    f"age={age:.2f}"
+                )
                 cv2.putText(combined, txt, (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
                 cv2.imshow("policy", combined)
                 k = cv2.waitKey(1) & 0xFF
                 if k == 27:
@@ -781,7 +833,9 @@ def main():
 
             # Rate keep
             dt = time.time() - t0
-            time.sleep(max(0.0, dt_target - dt))
+            sleep_s = dt_target - dt
+            if sleep_s > 0:
+                time.sleep(sleep_s)
 
     except KeyboardInterrupt:
         pass
