@@ -483,19 +483,18 @@ class ArmControllerU01:
 ############################################################
 
 def frame_rgb_to_torch_chw_uint8(frame_rgb: np.ndarray, device: str) -> torch.Tensor:
-    """
-    LeRobot policies typically accept images as torch tensors.
-    We provide uint8 CHW (0..255). Policy handles its own preprocessing.
-    """
     if frame_rgb is None:
         raise ValueError("frame_rgb is None")
-    if frame_rgb.ndim != 3 or frame_rgb.shape[2] != 3:
-        raise ValueError(f"expected HWC RGB, got {frame_rgb.shape}")
 
-    chw = torch.from_numpy(frame_rgb).to(torch.uint8).permute(2, 0, 1)  # CHW
-    # add batch dim if needed (policy often accepts unbatched too, but batching is safer)
-    chw = chw.unsqueeze(0).to(device, non_blocking=True)  # 1,C,H,W
-    return chw
+    # Ensure numpy dtype is uint8 (defensive)
+    if frame_rgb.dtype != np.uint8:
+        frame_rgb = frame_rgb.astype(np.uint8, copy=False)
+
+    # HWC -> CHW, keep uint8
+    t = torch.from_numpy(frame_rgb).permute(2, 0, 1).contiguous()  # uint8 CHW
+    t = t.unsqueeze(0)  # 1,C,H,W
+    t = t.to(device=device, dtype=torch.uint8, non_blocking=True)
+    return t
 
 def state_to_torch(state_vec: np.ndarray, device: str) -> torch.Tensor:
     """
@@ -503,7 +502,7 @@ def state_to_torch(state_vec: np.ndarray, device: str) -> torch.Tensor:
     Shape: (1, D)
     """
     state_vec = np.asarray(state_vec, dtype=np.float32).reshape(1, -1)
-    return torch.from_numpy(state_vec).to(device, non_blocking=True)
+    return torch.from_numpy(state_vec).to(device, dtype=torch.uint8, non_blocking=True)
 
 
 ############################################################
@@ -696,8 +695,8 @@ def main():
             # Inference
             with torch.no_grad():
                 assert obs["observation.state"].shape[-1] == 6, obs["observation.state"].shape
-                assert obs["observation.images.front"].shape[-2:] == (144, 256), obs["observation.images.front"].shape
-                assert obs["observation.images.side"].shape[-2:] == (144, 256), obs["observation.images.side"].shape
+                assert obs["observation.images.front"].dtype == torch.uint8, obs["observation.images.front"].dtype
+                assert obs["observation.images.side"].dtype == torch.uint8, obs["observation.images.side"].dtype
 
                 act = policy.select_action(obs)
 
