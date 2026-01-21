@@ -47,9 +47,9 @@ class JetsonBotClient(Robot):
 
         # Define three speed levels and a current index
         self.speed_levels = [
-            {"v": 0.2, "q": 1.0},  # slow
-            {"xy": 0.3, "theta": 2.0},  # medium
-            {"xy": 0.4, "theta": 3.0},  # fast
+            {"v": 0.2, "w": 1.0},  # slow
+            {"v": 0.3, "w": 2.0},  # medium
+            {"v": 0.4, "w": 3.0},  # fast
         ]
         self.speed_index = 0  # Start at slow
 

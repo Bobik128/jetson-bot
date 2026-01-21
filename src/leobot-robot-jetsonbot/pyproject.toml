@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_jetsonbot"
+version = "0.0.1"
+description = "LeRobot JetsonBot integration"
+authors = [
+  { name = "Me", email = "contact@spes.ai" },
+]
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy",
+  "lerobot>=0.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_robot_jetsonbot*"]
+exclude = ["*.egg-info"]
