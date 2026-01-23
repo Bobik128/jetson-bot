@@ -50,6 +50,7 @@ class JetsonBot(Robot):
         # Base with 2 wheels
         self.esp_link = ESP32Link(self.config.esp_port, self.config.esp_baud, self.config.esp_timeout)
         self.esp_link.start_reader()
+        time.sleep(3)
         
         self.cameras = make_cameras_from_configs(config.cameras)
 
