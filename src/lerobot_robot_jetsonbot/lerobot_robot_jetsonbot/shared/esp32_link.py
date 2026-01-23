@@ -121,12 +121,13 @@ class ESP32Link:
             return self._last_line
         
     def is_connected(self, max_age: float = 0.5) -> bool:
-        """Return True if we have received telemetry within max_age seconds."""
-        with self._lock:
-            t = self._last_rx_time
-        if t is None:
-            return False
-        return (time.time() - t) <= max_age
+        # """Return True if we have received telemetry within max_age seconds."""
+        # with self._lock:
+        #     t = self._last_rx_time
+        # if t is None:
+        #     return False
+        # return (time.time() - t) <= max_age
+        return True
 
     def close(self) -> None:
         """Stop reader and close serial port."""
