@@ -92,7 +92,6 @@ class ESP32Link:
                         self._last_v = v
                         self._last_w = w
                         self._last_rx_time = time.time()
-                        print("received")
                     except ValueError:
                         # keep last values, just store last line
                         pass
