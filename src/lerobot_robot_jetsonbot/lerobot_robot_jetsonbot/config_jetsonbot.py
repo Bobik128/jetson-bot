@@ -9,10 +9,10 @@ from lerobot.robots.config import RobotConfig
 def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     return {
         "front": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=640, height=480
+            index_or_path="/dev/video0", fps=30, width=256, height=144
         ),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video1", fps=30, width=640, height=480
+            index_or_path="/dev/video1", fps=30, width=256, height=144
         ),
     }
 
