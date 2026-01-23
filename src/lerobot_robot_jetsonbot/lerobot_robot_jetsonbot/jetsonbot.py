@@ -20,7 +20,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from .config_jetsonbot import JetsonBotConfig
 
-from shared.esp32_link import ESP32Link
+from .shared.esp32_link import ESP32Link
 
 logger = logging.getLogger(__name__)
 

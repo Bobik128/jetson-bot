@@ -20,7 +20,7 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("jetsonbot")
 @dataclass
 class JetsonBotConfig(RobotConfig):
-    arm_port: str = "/dev/ttyACM0"  # port to connect to the bus
+    port: str = "/dev/ttyACM0"  # port to connect to the bus
 
     esp_port: str = "/dev/ttyTHS1" # port to connect to the esp32
     esp_baud: int = 115200  # baud rate for esp32 communication
