@@ -5,17 +5,28 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
 from lerobot.robots.config import RobotConfig
 
-
 def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
-    return {
-        "front": OpenCVCameraConfig(
-            index_or_path=0, fps=30, width=256, height=144
-        ),
-        "wrist": OpenCVCameraConfig(
-            index_or_path=1, fps=30, width=256, height=144
-        ),
-    }
+    # Capture at a supported sensor mode, then scale to 256x144 for LeRobot.
+    front = (
+        "nvarguscamerasrc sensor-id=0 ! "
+        "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
+        "nvvidconv ! video/x-raw, width=256, height=144, format=BGRx ! "
+        "videoconvert ! video/x-raw, format=BGR ! "
+        "appsink drop=1 sync=false"
+    )
 
+    wrist = (
+        "nvarguscamerasrc sensor-id=1 ! "
+        "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
+        "nvvidconv ! video/x-raw, width=256, height=144, format=BGRx ! "
+        "videoconvert ! video/x-raw, format=BGR ! "
+        "appsink drop=1 sync=false"
+    )
+
+    return {
+        "front": OpenCVCameraConfig(index_or_path=front, fps=30, width=256, height=144),
+        "wrist": OpenCVCameraConfig(index_or_path=wrist, fps=30, width=256, height=144),
+    }
 
 @RobotConfig.register_subclass("jetsonbot")
 @dataclass
