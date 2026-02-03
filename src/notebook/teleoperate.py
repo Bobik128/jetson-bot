@@ -68,6 +68,7 @@ def main():
 
         leader = leader_arm.get_action()
         arm_action = {dst: leader[src] for src, dst in MAP.items() if src in leader}
+        print("ACTION:", arm_action)
 
         # Keyboard
         keyboard_keys = keyboard.get_action()
@@ -75,7 +76,6 @@ def main():
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-        print("ACTION:", action)
 
         # Send action to robot
         _ = robot.send_action(action)

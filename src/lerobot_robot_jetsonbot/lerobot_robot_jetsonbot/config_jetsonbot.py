@@ -92,4 +92,4 @@ class JetsonBotClientConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=jetsonbot_cameras_config)
 
     polling_timeout_ms: int = 15
-    connect_timeout_s: int = 5
+    connect_timeout_s: int = 30
