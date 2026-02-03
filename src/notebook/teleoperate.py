@@ -75,6 +75,8 @@ def main():
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
+        print("ACTION:", action)
+
         # Send action to robot
         _ = robot.send_action(action)
 
