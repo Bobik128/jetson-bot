@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import time
+import pygame
 
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
@@ -29,18 +30,15 @@ def main():
     # Create the robot and teleoperator configurations
     robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
     teleop_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
-    keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
     leader_arm = SO101Leader(teleop_arm_config)
-    keyboard = KeyboardTeleop(keyboard_config)
 
     # Connect to the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
     leader_arm.connect()
-    keyboard.connect()
 
     # Init rerun viewer
     init_rerun(session_name="jetsonbot_teleop")
@@ -60,19 +58,17 @@ def main():
         # arm_action = leader_arm.get_action()
         # arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
         MAP = {
-            "shoulder_lift": "arm_shoulder_lift.pos",
-            "elbow_flex":    "arm_elbow_flex.pos",
-            "wrist_flex":    "arm_wrist_flex.pos",
-            "gripper":       "arm_gripper.pos",
+            "shoulder_lift.pos": "arm_shoulder_lift.pos",
+            "elbow_flex.pos":    "arm_elbow_flex.pos",
+            "wrist_flex.pos":    "arm_wrist_flex.pos",
+            "gripper.pos":       "arm_gripper.pos",
         }
 
         leader = leader_arm.get_action()
+        # print("ACTION:", leader)
         arm_action = {dst: leader[src] for src, dst in MAP.items() if src in leader}
-        print("ACTION:", arm_action)
 
-        # Keyboard
-        keyboard_keys = keyboard.get_action()
-        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+        base_action = robot.read_dualsense_base_action(robot.js, robot.cfg)
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 

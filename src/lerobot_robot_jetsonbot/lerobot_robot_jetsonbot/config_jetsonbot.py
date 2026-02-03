@@ -87,7 +87,10 @@ class JetsonBotClientConfig(RobotConfig):
             # quit teleop
             "quit": "q",
         }
+
+        
     )
+
 
     cameras: dict[str, CameraConfig] = field(default_factory=jetsonbot_cameras_config)
 
