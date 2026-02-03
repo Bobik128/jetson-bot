@@ -171,6 +171,7 @@ class JetsonBotClient(Robot):
         pass
 
     def read_dualsense_base_action(
+        self,
         js: pygame.joystick.Joystick,
         cfg: GamepadConfig = GamepadConfig(),
     ) -> Dict[str, float]:

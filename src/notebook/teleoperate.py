@@ -18,7 +18,6 @@ import time
 import pygame
 
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
-from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
@@ -43,7 +42,7 @@ def main():
     # Init rerun viewer
     init_rerun(session_name="jetsonbot_teleop")
 
-    if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
+    if not robot.is_connected or not leader_arm.is_connected:
         raise ValueError("Robot or teleop is not connected!")
 
     print("Starting teleop loop...")
@@ -68,7 +67,7 @@ def main():
         # print("ACTION:", leader)
         arm_action = {dst: leader[src] for src, dst in MAP.items() if src in leader}
 
-        base_action = robot.read_dualsense_base_action(robot.js, robot.cfg)
+        base_action = robot.read_dualsense_base_action(js = robot.js, cfg = robot.cfg)
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 

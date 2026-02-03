@@ -4,6 +4,7 @@ import time
 from functools import cached_property
 from itertools import chain
 from typing import Any
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -24,7 +25,13 @@ from .shared.esp32_link import ESP32Link
 
 logger = logging.getLogger(__name__)
 
+def map_range(x: float, in_min: float, in_max: float, out_min: float, out_max: float) -> float:
+    if in_max == in_min:
+        raise ValueError("in_min and in_max must be different")
+    return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
 
+def clamp0100(x: float) -> float:
+    return 0.0 if x < 0.0 else 100.0 if x > 100.0 else x
 class JetsonBot(Robot):
 
     config_class = JetsonBotConfig
@@ -231,6 +238,130 @@ class JetsonBot(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
+    
+    def remap_arm_goal_pos_to_zone(arm_goal_pos: Dict[str, float], *, verbose: bool = False) -> Dict[str, float]:
+        """
+        Keep-out/collision-avoidance remap for LeRobot action dict.
+
+        Input dict keys: "... .pos" (e.g. "arm_shoulder_lift.pos")
+        Input value range: 0..100
+
+        Only modifies:
+        - arm_shoulder_lift.pos  (id 2)
+        - arm_elbow_flex.pos     (id 3)
+        - arm_wrist_flex.pos     (id 4)
+        """
+
+        import math
+
+        K2 = "arm_shoulder_lift.pos"  # id 2
+        K3 = "arm_elbow_flex.pos"     # id 3
+        K4 = "arm_wrist_flex.pos"     # id 4
+
+        if K2 not in arm_goal_pos or K3 not in arm_goal_pos or K4 not in arm_goal_pos:
+            return arm_goal_pos
+
+        # Copy-through by default
+        out_goal = dict(arm_goal_pos)
+
+        # ================= PARAMETERS =================
+        fillet_r = 2.0      # radius of rounded corner geometry
+        keepout_r = 5.0     # repulsion band thickness
+        margin = 0.01
+
+        # Forbidden quadrant boundary: x <= bx AND y <= by
+        bx = 4.6
+        by = -0.6
+
+        # ================= MAP INPUT (0..100 scale) =================
+        # Your original ranges were:
+        #   u2: 0..0.25
+        #   u3: 1..0.66
+        #   u4: 1..0.47
+        #
+        # With 0..100 scaling, that becomes:
+        #   u2: 0..25
+        #   u3: 100..66
+        #   u4: 100..47
+
+        u2 = clamp0100(out_goal[K2])
+        u3 = clamp0100(out_goal[K3])
+        u4 = clamp0100(out_goal[K4])
+
+        a_deg = map_range(u2, 0.0, 25.0, 125.0, 90.0)
+        b_deg = map_range(u3, 100.0, 66.0, 19.0, 90.0)
+        c_deg = map_range(u4, 100.0, 47.0, 102.0, 180.0)
+
+        a = math.radians(a_deg)
+        b = math.radians(b_deg)
+        c = math.radians(c_deg)
+
+        # ================= FORWARD KINEMATICS =================
+        x1 = math.cos(a) * 11.6
+        y1 = math.sin(a) * 11.6
+
+        omega = -(math.pi - a - b)
+        x2 = math.cos(omega) * 10.5
+        y2 = math.sin(omega) * 10.5
+
+        fi = omega + (c - math.pi)
+        x3 = math.cos(fi) * 5.5
+        y3 = math.sin(fi) * 5.5
+
+        finalX = x1 + x2 + x3
+        finalY = y1 + y2 + y3
+
+        # ================= ROUNDED SDF =================
+        vx = max(finalX - bx, 0.0)
+        vy = max(finalY - by, 0.0)
+
+        dist_raw = math.hypot(vx, vy)
+        dist = dist_raw - fillet_r
+
+        if verbose:
+            print(f"[keepout] X={finalX:.3f}, Y={finalY:.3f}, sdf={dist:.3f}")
+
+        # ================= OUTSIDE KEEP-OUT =================
+        if dist > keepout_r:
+            return out_goal
+
+        # ================= NORMAL =================
+        if dist_raw > 1e-9:
+            nx = vx / dist_raw
+            ny = vy / dist_raw
+        else:
+            nx = ny = 1.0 / math.sqrt(2.0)
+
+        # ================= PUSH =================
+        target = keepout_r + margin
+        push = target - dist
+        safeX = finalX + nx * push
+        safeY = finalY + ny * push
+
+        if verbose:
+            print(f"[keepout] -> safeX={safeX:.3f}, safeY={safeY:.3f}, push={push:.3f}")
+
+        # ================= IK =================
+        length = math.hypot(safeX - x3, safeY - y3)
+        if length < 1e-6:
+            return out_goal
+
+        def _clamp_unit(v: float) -> float:
+            return max(-1.0, min(1.0, v))
+
+        alpha2 = math.acos(_clamp_unit((length * length + 11.6 * 11.6 - 10.5 * 10.5) / (2.0 * length * 11.6)))
+        beta   = math.acos(_clamp_unit((10.5 * 10.5 + 11.6 * 11.6 - length * length) / (2.0 * 10.5 * 11.6)))
+        alpha  = math.atan2(safeY - y3, safeX - x3) + alpha2
+
+        # ================= MAP OUTPUT BACK (0..100 scale) =================
+        out_goal[K2] = clamp0100(map_range(math.degrees(alpha), 125.0, 90.0, 0.0, 25.0))
+        out_goal[K3] = clamp0100(map_range(math.degrees(beta),  19.0, 90.0, 100.0, 66.0))
+
+        # NOTE:
+        # Your original code did not update id4 (wrist) in output.
+        # If you want to also adjust wrist based on keepout, say so and we’ll extend the IK mapping.
+
+        return out_goal
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
@@ -249,6 +380,11 @@ class JetsonBot(Robot):
 
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
+
+        if "arm_gripper.pos" in arm_goal_pos:
+            arm_goal_pos["arm_gripper.pos"] = 100.0 - arm_goal_pos["arm_gripper.pos"]
+
+        arm_goal_pos = self.remap_arm_goal_pos_to_zone(arm_goal_pos, verbose=False)
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
