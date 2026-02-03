@@ -18,7 +18,7 @@ import time
 
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -28,12 +28,12 @@ FPS = 30
 def main():
     # Create the robot and teleoperator configurations
     robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
-    teleop_arm_config = SO100LeaderConfig(port="/dev/ttyACM0", id="the_leader")
+    teleop_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
-    leader_arm = SO100Leader(teleop_arm_config)
+    leader_arm = SO101Leader(teleop_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
 
     # Connect to the robot and teleoperator
