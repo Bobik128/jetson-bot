@@ -59,14 +59,15 @@ def main():
         # Arm
         # arm_action = leader_arm.get_action()
         # arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-        leader = leader_arm.get_action()
-
-        action = {
-            "arm_shoulder_lift.pos": leader["shoulder_lift"],
-            "arm_elbow_flex.pos":    leader["elbow_flex"],
-            "arm_wrist_flex.pos":    leader["wrist_flex"],
-            "arm_gripper.pos":       leader["gripper"],
+        MAP = {
+            "shoulder_lift": "arm_shoulder_lift.pos",
+            "elbow_flex":    "arm_elbow_flex.pos",
+            "wrist_flex":    "arm_wrist_flex.pos",
+            "gripper":       "arm_gripper.pos",
         }
+
+        leader = leader_arm.get_action()
+        arm_action = {dst: leader[src] for src, dst in MAP.items() if src in leader}
 
         # Keyboard
         keyboard_keys = keyboard.get_action()
