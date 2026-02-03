@@ -285,9 +285,9 @@ class JetsonBot(Robot):
         #   u3: 100..66
         #   u4: 100..47
 
-        u2 = clamp(arm_goal_pos[2], -100.0, 100.0)
-        u3 = clamp(arm_goal_pos[3], -100.0, 100.0)
-        u4 = clamp(arm_goal_pos[4], -100.0, 100.0)
+        u2 = clamp(arm_goal_pos[K2], -100.0, 100.0)
+        u3 = clamp(arm_goal_pos[K3], -100.0, 100.0)
+        u4 = clamp(arm_goal_pos[K4], -100.0, 100.0)
 
         a_deg = map_range(u2, -100.0, 100.0, 125.0, 90.0)
         b_deg = map_range(u3, -100.0, 100.0, 19.0, 90.0)
