@@ -15,8 +15,6 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.robots.robot import Robot
 from .config_jetsonbot import JetsonBotClientConfig
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
@@ -375,32 +373,6 @@ class JetsonBotClient(Robot):
             obs_dict[cam_name] = frame
 
         return obs_dict
-
-    def _from_controller_to_action(self):
-        # Speed control
-        if self.teleop_keys["speed_up"] in pressed_keys:
-            self.speed_index = min(self.speed_index + 1, 2)
-        if self.teleop_keys["speed_down"] in pressed_keys:
-            self.speed_index = max(self.speed_index - 1, 0)
-        speed_setting = self.speed_levels[self.speed_index]
-        v_speed = speed_setting["v"]
-        w_speed = speed_setting["w"]
-
-        v_cmd = 0.0  # m/s forward/backward
-        w_cmd = 0.0  # rad/s left/right
-
-        if self.teleop_keys["forward"] in pressed_keys:
-            v_cmd += v_speed
-        if self.teleop_keys["backward"] in pressed_keys:
-            v_cmd -= v_speed
-        if self.teleop_keys["left"] in pressed_keys:
-            w_cmd += w_speed
-        if self.teleop_keys["right"] in pressed_keys:
-            y_cw_cmdmd -= w_speed
-        return {
-            "motor_linear.vel": v_cmd,
-            "motor_angular.vel": w_cmd,
-        }
 
     def configure(self):
         pass
