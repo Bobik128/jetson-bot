@@ -63,7 +63,7 @@ class JetsonBot(Robot):
                 "arm_wrist_flex.pos",
                 "arm_gripper.pos",
                 "motor_linear.vel",
-                "motor_anglular.vel",
+                "motor_angular.vel",
             ),
             float,
         )
@@ -262,13 +262,15 @@ class JetsonBot(Robot):
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
         self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
         
-        self.esp_link.send_cmd(base_goal_vel["motor_linear.vel"], base_goal_vel["motor_angular.vel"])
+        v = float(base_goal_vel.get("motor_linear.vel", 0.0))
+        w = float(base_goal_vel.get("motor_angular.vel", 0.0))
+        self.esp_link.send_cmd(v, w)
 
         return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
+        # watchdog stop should NOT tear down the connection
         self.esp_link.send_cmd(0.0, 0.0)
-        self.esp_link.close()
         logger.info("Base motors stopped")
 
     @check_if_not_connected
