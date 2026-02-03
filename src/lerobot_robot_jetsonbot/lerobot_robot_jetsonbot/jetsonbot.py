@@ -239,7 +239,7 @@ class JetsonBot(Robot):
 
         return obs_dict
     
-    def remap_arm_goal_pos_to_zone(arm_goal_pos: Dict[str, float], *, verbose: bool = False) -> Dict[str, float]:
+    def remap_arm_goal_pos_to_zone(self, arm_goal_pos: Dict[str, float], *, verbose: bool = False) -> Dict[str, float]:
         """
         Keep-out/collision-avoidance remap for LeRobot action dict.
 
