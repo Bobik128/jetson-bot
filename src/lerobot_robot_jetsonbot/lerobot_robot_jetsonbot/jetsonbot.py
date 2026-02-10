@@ -285,13 +285,13 @@ class JetsonBot(Robot):
         #   u3: 100..66
         #   u4: 100..47
 
-        u2 = -clamp(arm_goal_pos[K2], -100.0, 100.0)
+        u2 = clamp(arm_goal_pos[K2], -100.0, 100.0)
         u3 = clamp(arm_goal_pos[K3], -100.0, 100.0)
         u4 = clamp(arm_goal_pos[K4], -100.0, 100.0)
 
-        a_deg = map_range(u2, -100.0, 100.0, 125.0, 90.0)
-        b_deg = map_range(u3, -100.0, 100.0, 19.0, 90.0)
-        c_deg = map_range(u4, -100.0, 100.0, 102.0, 180.0)
+        a_deg = map_range(u2, -100.0, -50.0, 125.0, 90.0)
+        b_deg = map_range(u3, 100.0, 32.0, 19.0, 90.0)
+        c_deg = map_range(u4, 100.0, -6.0, 102.0, 180.0)
 
         a = math.radians(a_deg)
         b = math.radians(b_deg)
@@ -355,11 +355,11 @@ class JetsonBot(Robot):
         alpha  = math.atan2(safeY - y3, safeX - x3) + alpha2
 
         # ================= MAP OUTPUT BACK (0..100 scale) =================
-        u2_out = map_range(math.degrees(alpha), 125.0, 90.0, -100.0, 100.0)
+        u2_out = map_range(math.degrees(alpha), 125.0, 90.0, -100.0, -50.0)
         u2_out = clamp(u2_out, -100.0, 100.0)
-        out_goal[K2] = -u2_out
+        out_goal[K2] = u2_out
 
-        u3_out = map_range(math.degrees(beta), 19.0, 90.0, -100.0, 100.0)
+        u3_out = map_range(math.degrees(beta), 19.0, 90.0, 100.0, 32.0)
         u3_out = clamp(u3_out, -100.0, 100.0)
         out_goal[K3] = u3_out
 
