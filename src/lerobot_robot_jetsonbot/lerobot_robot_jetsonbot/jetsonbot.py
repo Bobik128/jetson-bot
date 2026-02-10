@@ -253,7 +253,7 @@ class JetsonBot(Robot):
 
         import math
 
-        print(arm_goal_pos)
+        # print(arm_goal_pos)
 
         K2 = "arm_shoulder_lift.pos"  # id 2
         K3 = "arm_elbow_flex.pos"     # id 3
