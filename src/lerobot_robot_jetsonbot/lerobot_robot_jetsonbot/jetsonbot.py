@@ -271,7 +271,7 @@ class JetsonBot(Robot):
         margin = 0.01
 
         # Forbidden quadrant boundary: x <= bx AND y <= by
-        bx = 4.6
+        bx = 4.8
         by = -0.6
 
         # ================= MAP INPUT (0..100 scale) =================
