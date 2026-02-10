@@ -19,8 +19,10 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
+from lerobot_teleoperator_dualsense import DualsenseTeleop, DualsenseTeleopConfig
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -29,17 +31,19 @@ FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "brick_moving"
-HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+HF_REPO_ID = "Bobik553/jetson-bot"
 
 
 def main():
     # Create the robot and teleoperator configurations
     robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
     leader_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
+    dualsense_config = DualsenseTeleopConfig()
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
     leader_arm = SO101Leader(leader_arm_config)
+    dualsense = DualsenseTeleop(dualsense_config)
 
     # TODO(Steven): Update this example to use pipelines
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
@@ -63,12 +67,14 @@ def main():
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
     leader_arm.connect()
+    dualsense.connect()
 
     # Rerun visualization
+    listener, events = init_keyboard_listener()
     init_rerun(session_name="jetsonbot_record")
 
     try:
-        if not robot.is_connected or not leader_arm.is_connected:
+        if not robot.is_connected or not leader_arm.is_connected or not dualsense.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
         print("Starting record loop...")
@@ -82,7 +88,7 @@ def main():
                 events=events,
                 fps=FPS,
                 dataset=dataset,
-                teleop=[leader_arm],
+                teleop=[leader_arm, dualsense],
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
@@ -100,7 +106,7 @@ def main():
                     robot=robot,
                     events=events,
                     fps=FPS,
-                    teleop=[leader_arm],
+                    teleop=[leader_arm, dualsense],
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
@@ -124,6 +130,8 @@ def main():
         log_say("Stop recording")
         robot.disconnect()
         leader_arm.disconnect()
+        dualsense.disconnect()
+        listener.stop()
 
         dataset.finalize()
         dataset.push_to_hub()

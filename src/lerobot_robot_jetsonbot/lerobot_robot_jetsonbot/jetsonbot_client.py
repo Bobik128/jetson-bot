@@ -66,14 +66,6 @@ class JetsonBotClient(Robot):
 
         self.last_remote_state = {}
 
-        self.js = init_dualsense()
-
-        self.cfg = GamepadConfig(
-            axis_forward=1,   # adjust if needed
-            axis_turn=0,      # adjust if needed
-            axis_turbo=2,     # adjust if needed (often 2 or 5)
-        )
-
         # Define three speed levels and a current index
         self.speed_levels = [
             {"v": 0.2, "w": 1.0},  # slow

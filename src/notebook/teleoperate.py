@@ -46,7 +46,7 @@ def main():
     # Init rerun viewer
     init_rerun(session_name="jetsonbot_teleop")
 
-    if not robot.is_connected or not leader_arm.is_connected:
+    if not robot.is_connected or not leader_arm.is_connected or not dualsense.is_connected:
         raise ValueError("Robot or teleop is not connected!")
 
     print("Starting teleop loop...")

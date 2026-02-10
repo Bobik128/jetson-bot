@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: lerobot_teleoperator_dualsense
+Version: 0.0.2
+Summary: LeRobot teleop integration
+Author-email: Spes Robotics <contact@spes.ai>
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy

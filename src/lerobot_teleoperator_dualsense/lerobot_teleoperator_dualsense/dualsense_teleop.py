@@ -7,7 +7,7 @@ import numpy as np
 import pygame
 
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot_teleoperator_teleop.config_dualsense import TeleopConfig  # keep your package path
+from .config_teleop import DualsenseTeleopConfig  # keep your package path
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -86,10 +86,10 @@ class DualsenseTeleop(Teleoperator):
       - home              (bool)
     """
 
-    config_class = TeleopConfig
+    config_class = DualsenseTeleopConfig
     name = "dualsense"
 
-    def __init__(self, config: TeleopConfig):
+    def __init__(self, config: DualsenseTeleopConfig):
         super().__init__(config)
         self.config = config
 

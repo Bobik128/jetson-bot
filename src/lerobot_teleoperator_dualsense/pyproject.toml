@@ -19,9 +19,6 @@ classifiers = [
 ]
 dependencies = [
   "numpy",
-  "transforms3d",
-  "teleop",
-  "lerobot>=0.4",
 ]
 
 [tool.setuptools.packages.find]
