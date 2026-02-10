@@ -1,2 +1,12 @@
+from .combo_teleop import SOLeaderPlusDualsense
+from .config_teleop_combo import SOLeaderPlusDualsenseConfig
 from .config_teleop import DualsenseTeleopConfig
-from .dualsense_teleop import DualsenseTeleop
+
+__all__ = [
+    "DualsenseTeleop",
+    "DualsenseTeleopConfig",
+    "SOLeader",
+    "SOLeaderTeleopConfig",
+    "SOLeaderPlusDualsense",
+    "SOLeaderPlusDualsenseConfig",
+]
