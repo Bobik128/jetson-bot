@@ -286,8 +286,8 @@ class JetsonBot(Robot):
         #   u4: 100..47
 
         u2 = -clamp(arm_goal_pos[K2], -100.0, 100.0)
-        u3 = -clamp(arm_goal_pos[K3], -100.0, 100.0)
-        u4 = -clamp(arm_goal_pos[K4], -100.0, 100.0)
+        u3 = clamp(arm_goal_pos[K3], -100.0, 100.0)
+        u4 = clamp(arm_goal_pos[K4], -100.0, 100.0)
 
         a_deg = map_range(u2, -100.0, 100.0, 125.0, 90.0)
         b_deg = map_range(u3, -100.0, 100.0, 19.0, 90.0)
@@ -361,7 +361,7 @@ class JetsonBot(Robot):
 
         u3_out = map_range(math.degrees(beta), 19.0, 90.0, -100.0, 100.0)
         u3_out = clamp(u3_out, -100.0, 100.0)
-        out_goal[K3] = -u3_out
+        out_goal[K3] = u3_out
 
         # NOTE:
         # Your original code did not update id4 (wrist) in output.
