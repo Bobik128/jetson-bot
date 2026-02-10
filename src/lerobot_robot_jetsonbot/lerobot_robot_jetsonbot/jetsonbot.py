@@ -390,7 +390,7 @@ class JetsonBot(Robot):
         if "arm_gripper.pos" in arm_goal_pos:
             arm_goal_pos["arm_gripper.pos"] = 100.0 - arm_goal_pos["arm_gripper.pos"]
 
-        # arm_goal_pos = self.remap_arm_goal_pos_to_zone(arm_goal_pos, verbose=False)
+        arm_goal_pos = self.remap_arm_goal_pos_to_zone(arm_goal_pos, verbose=False)
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
