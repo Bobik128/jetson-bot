@@ -18,8 +18,6 @@ from .config_jetsonbot import JetsonBotClientConfig
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-import pygame
-
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return lo if x < lo else hi if x > hi else x
@@ -36,51 +34,6 @@ def expo_curve(x: float, expo: float) -> float:
     x = clamp(x, -1.0, 1.0)
     expo = clamp(expo, 0.0, 1.0)
     return (1.0 - expo) * x + expo * (x * x * x)
-
-
-@dataclass
-class GamepadConfig:
-    # Axes (pygame mapping can differ across OS/drivers; these defaults often work)
-    axis_forward: int = 1   # left stick vertical (up/down)
-    axis_turn: int = 0      # right stick horizontal OR left stick horizontal, depending preference
-    axis_turbo: int = 5     # commonly R2 trigger (often 2 or 5)
-
-    invert_forward: bool = True  # stick up => positive v
-    invert_turn: bool = False
-
-    deadzone: float = 0.08
-    expo: float = 0.25
-
-    # Base speed limits (max values when turbo=1)
-    max_v_mps: float = 0.35
-    max_w_radps: float = 2.0
-
-    # Turbo behavior:
-    # If your trigger axis is [-1..1], we map to [0..1].
-    # If you don't want turbo, set use_turbo=False.
-    use_turbo: bool = True
-    turbo_min_scale: float = 0.35  # at turbo=0, still allow slow movement
-
-
-def init_dualsense(index: int = 0) -> pygame.joystick.Joystick:
-    """
-    Initialize pygame + the joystick device.
-    Call once at startup.
-    """
-    pygame.init()
-    pygame.joystick.init()
-
-    n = pygame.joystick.get_count()
-    if n < 1:
-        raise RuntimeError("No gamepad found (pygame.joystick.get_count() == 0).")
-
-    if index >= n:
-        raise RuntimeError(f"Requested joystick index {index}, but only {n} present.")
-
-    js = pygame.joystick.Joystick(index)
-    js.init()
-    print(f"[gamepad] connected: {js.get_name()} | axes={js.get_numaxes()} buttons={js.get_numbuttons()}")
-    return js
 
 
 class JetsonBotClient(Robot):
@@ -170,55 +123,55 @@ class JetsonBotClient(Robot):
     def is_calibrated(self) -> bool:
         pass
 
-    def read_dualsense_base_action(
-        self,
-        js: pygame.joystick.Joystick,
-        cfg: GamepadConfig = GamepadConfig(),
-    ) -> Dict[str, float]:
-        """
-        Read controller axes and return LeRobot base action:
-            {"motor_linear.vel": v_cmd, "motor_angular.vel": w_cmd}
+    # def read_dualsense_base_action(
+    #     self,
+    #     js: pygame.joystick.Joystick,
+    #     cfg: GamepadConfig = GamepadConfig(),
+    # ) -> Dict[str, float]:
+    #     """
+    #     Read controller axes and return LeRobot base action:
+    #         {"motor_linear.vel": v_cmd, "motor_angular.vel": w_cmd}
 
-        IMPORTANT: call pygame.event.pump() ONCE per control loop before reading.
-        """
-        # Make sure pygame internal state is updated (do this once per loop)
-        pygame.event.pump()
+    #     IMPORTANT: call pygame.event.pump() ONCE per control loop before reading.
+    #     """
+    #     # Make sure pygame internal state is updated (do this once per loop)
+    #     pygame.event.pump()
 
-        # Read raw axes in [-1, 1] (typically)
-        fwd = float(js.get_axis(cfg.axis_forward))
-        turn = float(js.get_axis(cfg.axis_turn))
+    #     # Read raw axes in [-1, 1] (typically)
+    #     fwd = float(js.get_axis(cfg.axis_forward))
+    #     turn = float(js.get_axis(cfg.axis_turn))
 
-        if cfg.invert_forward:
-            fwd = -fwd
-        if cfg.invert_turn:
-            turn = -turn
+    #     if cfg.invert_forward:
+    #         fwd = -fwd
+    #     if cfg.invert_turn:
+    #         turn = -turn
 
-        # Deadzone + expo shaping
-        fwd = expo_curve(apply_deadzone(fwd, cfg.deadzone), cfg.expo)
-        turn = expo_curve(apply_deadzone(turn, cfg.deadzone), cfg.expo)
+    #     # Deadzone + expo shaping
+    #     fwd = expo_curve(apply_deadzone(fwd, cfg.deadzone), cfg.expo)
+    #     turn = expo_curve(apply_deadzone(turn, cfg.deadzone), cfg.expo)
 
-        # Optional turbo from trigger
-        scale = 1.0
-        if cfg.use_turbo:
-            try:
-                raw = float(js.get_axis(cfg.axis_turbo))  # often [-1..1]
-                turbo = (raw + 1.0) * 0.5                # -> [0..1]
-                turbo = clamp(turbo, 0.0, 1.0)
-                scale = cfg.turbo_min_scale + (1.0 - cfg.turbo_min_scale) * turbo
-            except Exception:
-                scale = 1.0
+    #     # Optional turbo from trigger
+    #     scale = 1.0
+    #     if cfg.use_turbo:
+    #         try:
+    #             raw = float(js.get_axis(cfg.axis_turbo))  # often [-1..1]
+    #             turbo = (raw + 1.0) * 0.5                # -> [0..1]
+    #             turbo = clamp(turbo, 0.0, 1.0)
+    #             scale = cfg.turbo_min_scale + (1.0 - cfg.turbo_min_scale) * turbo
+    #         except Exception:
+    #             scale = 1.0
 
-        v_cmd = fwd * cfg.max_v_mps * scale
-        w_cmd = turn * cfg.max_w_radps * scale
+    #     v_cmd = fwd * cfg.max_v_mps * scale
+    #     w_cmd = turn * cfg.max_w_radps * scale
 
-        # Final clamp (safety)
-        v_cmd = clamp(v_cmd, -cfg.max_v_mps, cfg.max_v_mps)
-        w_cmd = clamp(w_cmd, -cfg.max_w_radps, cfg.max_w_radps)
+    #     # Final clamp (safety)
+    #     v_cmd = clamp(v_cmd, -cfg.max_v_mps, cfg.max_v_mps)
+    #     w_cmd = clamp(w_cmd, -cfg.max_w_radps, cfg.max_w_radps)
 
-        return {
-            "motor_linear.vel": v_cmd,
-            "motor_angular.vel": w_cmd,
-        }
+    #     return {
+    #         "motor_linear.vel": v_cmd,
+    #         "motor_angular.vel": w_cmd,
+    #     }
 
     @check_if_already_connected
     def connect(self) -> None:

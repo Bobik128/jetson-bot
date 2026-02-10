@@ -1,0 +1,315 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import numpy as np
+import pygame
+
+from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot_teleoperator_teleop.config_dualsense import TeleopConfig  # keep your package path
+
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return lo if x < lo else hi if x > hi else x
+
+
+def apply_deadzone(x: float, dz: float) -> float:
+    return 0.0 if abs(x) < dz else x
+
+
+def expo_curve(x: float, expo: float) -> float:
+    """
+    expo in [0..1]. 0 = linear, 1 = softer around center.
+    """
+    x = clamp(x, -1.0, 1.0)
+    expo = clamp(expo, 0.0, 1.0)
+    return (1.0 - expo) * x + expo * (x * x * x)
+
+
+@dataclass
+class DualsensePygameMapping:
+    """
+    Defaults often work on Linux with SDL, but axis/button indices vary by OS/driver.
+    Override in config as needed.
+    """
+
+    # Axes (float in [-1, 1] typically)
+    axis_forward: int = 1         # left stick vertical
+    axis_turn: int = 0            # left stick horizontal (or set to right stick horiz)
+    axis_turbo: int = 5           # often R2 (can be 2 or 5)
+
+    invert_forward: bool = True
+    invert_turn: bool = False
+
+    deadzone: float = 0.08
+    expo: float = 0.25
+
+    # Base speed limits
+    max_v_mps: float = 0.35
+    max_w_radps: float = 2.0
+
+    # Turbo behavior
+    use_turbo: bool = True
+    turbo_min_scale: float = 0.35  # at turbo=0 you still get fine control
+
+    # Buttons (digital)
+    # Common DualSense mapping (not guaranteed):
+    #   0: Cross, 1: Circle, 2: Square, 3: Triangle
+    #   4: L1, 5: R1, 6: L2 (digital), 7: R2 (digital)
+    #   8: Create, 9: Options, 10: L3, 11: R3
+    #   12: PS, 13: Touchpad
+    btn_gripper_open: int = 5     # R1
+    btn_gripper_close: int = 4    # L1
+    btn_home: int = 12            # PS button
+
+    # Speed stepping via dpad "hats"
+    use_hat_speed_steps: bool = True
+    hat_index: int = 0
+    # hat returns (x, y) with y=+1 up, y=-1 down
+    speed_levels: tuple[tuple[float, float], ...] = (
+        (0.20, 1.0),  # slow
+        (0.30, 2.0),  # medium
+        (0.40, 3.0),  # fast
+    )
+
+
+class DualsenseTeleop(Teleoperator):
+    """
+    Teleoperator that reads a DualSense via pygame and emits a LeRobot action dict.
+
+    By default outputs:
+      - motor_linear.vel  (m/s)
+      - motor_angular.vel (rad/s)
+    Optionally:
+      - arm_gripper.pos   (float; you decide the semantic range)
+      - home              (bool)
+    """
+
+    config_class = TeleopConfig
+    name = "dualsense"
+
+    def __init__(self, config: TeleopConfig):
+        super().__init__(config)
+        self.config = config
+
+        self._connected = False
+        self._calibrated = True
+
+        self._js: Optional[pygame.joystick.Joystick] = None
+        self._map = DualsensePygameMapping()
+
+        # stateful helpers
+        self._speed_index = 0
+        self._last_hat_y = 0
+
+        # gripper state (you can change this convention)
+        # JetsonBotClient used "arm_gripper.pos" float; many people do 0..100.
+        self._gripper_open_value = 100.0
+        self._gripper_close_value = 0.0
+
+    # -------------------------
+    # LeRobot required features
+    # -------------------------
+    @property
+    def action_features(self) -> dict[str, type]:
+        feats: dict[str, type] = {
+            # wheel base (matches your JetsonBotClient state keys)
+            "motor_linear.vel": float,
+            "motor_angular.vel": float,
+        }
+        if getattr(self.config, "use_gripper", False):
+            feats["arm_gripper.pos"] = float
+        if getattr(self.config, "use_home", True):
+            feats["home"] = bool
+        return feats
+
+    @property
+    def feedback_features(self) -> dict[str, type]:
+        return {}
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self._calibrated
+
+    # -------------------------
+    # lifecycle
+    # -------------------------
+    def connect(self, calibrate: bool = True) -> None:
+        # pygame init
+        pygame.init()
+        pygame.joystick.init()
+
+        index = int(getattr(self.config, "joystick_index", 0))
+        n = pygame.joystick.get_count()
+        if n < 1:
+            raise RuntimeError("No gamepad found (pygame.joystick.get_count() == 0).")
+        if index >= n:
+            raise RuntimeError(f"Requested joystick index {index}, but only {n} present.")
+
+        js = pygame.joystick.Joystick(index)
+        js.init()
+        self._js = js
+
+        # allow overrides from config if present
+        self._apply_config_overrides()
+
+        self._connected = True
+
+        if calibrate:
+            self.calibrate()
+
+    def calibrate(self) -> None:
+        # nothing to calibrate for a joystick; keep hook for LeRobot
+        self._calibrated = True
+
+    def configure(self) -> None:
+        # optional hook; many teleoperators leave this empty
+        pass
+
+    def disconnect(self) -> None:
+        self._connected = False
+        try:
+            if self._js is not None:
+                self._js.quit()
+        finally:
+            self._js = None
+            try:
+                pygame.joystick.quit()
+                pygame.quit()
+            except Exception:
+                pass
+
+    def send_feedback(self, feedback: dict[str, float]) -> None:
+        # optional: DualSense rumble/lightbar via hid libs; pygame doesn't standardize it
+        pass
+
+    # -------------------------
+    # main action readout
+    # -------------------------
+    def get_action(self) -> dict[str, Any]:
+        if not self._connected or self._js is None:
+            return {}
+
+        # Pump events ONCE per loop (required for pygame to update internal joystick state)
+        pygame.event.pump()
+
+        v_cmd, w_cmd = self._read_base_vel(self._js, self._map)
+
+        action: dict[str, Any] = {
+            "motor_linear.vel": float(v_cmd),
+            "motor_angular.vel": float(w_cmd),
+        }
+
+        # optional home (PS button)
+        # if getattr(self.config, "use_home", True):
+        #     if self._read_home(self._js, self._map):
+        #         action["home"] = True
+
+        return action
+
+    # -------------------------
+    # internals
+    # -------------------------
+    def _apply_config_overrides(self) -> None:
+        """
+        If your TeleopConfig exposes fields, you can override mapping here.
+        This is written defensively: missing attrs are ignored.
+        """
+        # axis/button overrides
+        for field in (
+            "axis_forward",
+            "axis_turn",
+            "axis_turbo",
+            "invert_forward",
+            "invert_turn",
+            "deadzone",
+            "expo",
+            "max_v_mps",
+            "max_w_radps",
+            "use_turbo",
+            "turbo_min_scale",
+            "btn_gripper_open",
+            "btn_gripper_close",
+            "btn_home",
+            "use_hat_speed_steps",
+            "hat_index",
+        ):
+            if hasattr(self.config, field):
+                setattr(self._map, field, getattr(self.config, field))
+
+        # speed levels override (expects list/tuple of pairs)
+        if hasattr(self.config, "speed_levels"):
+            levels = getattr(self.config, "speed_levels")
+            if levels:
+                self._map.speed_levels = tuple((float(v), float(w)) for v, w in levels)
+
+        # gripper semantics override
+        if hasattr(self.config, "gripper_open_value"):
+            self._gripper_open_value = float(getattr(self.config, "gripper_open_value"))
+        if hasattr(self.config, "gripper_close_value"):
+            self._gripper_close_value = float(getattr(self.config, "gripper_close_value"))
+
+    def _read_base_vel(self, js: pygame.joystick.Joystick, cfg: DualsensePygameMapping) -> tuple[float, float]:
+        # Optional speed stepping from D-pad hat
+        if cfg.use_hat_speed_steps and js.get_numhats() > cfg.hat_index:
+            hx, hy = js.get_hat(cfg.hat_index)
+            # edge-detect on hat y
+            if hy != 0 and self._last_hat_y == 0:
+                if hy > 0:
+                    self._speed_index = min(self._speed_index + 1, len(cfg.speed_levels) - 1)
+                else:
+                    self._speed_index = max(self._speed_index - 1, 0)
+            self._last_hat_y = hy
+
+        max_v, max_w = cfg.max_v_mps, cfg.max_w_radps
+        if cfg.use_hat_speed_steps and cfg.speed_levels:
+            max_v, max_w = cfg.speed_levels[self._speed_index]
+
+        # Read raw axes
+        fwd = float(js.get_axis(cfg.axis_forward))
+        turn = float(js.get_axis(cfg.axis_turn))
+
+        if cfg.invert_forward:
+            fwd = -fwd
+        if cfg.invert_turn:
+            turn = -turn
+
+        # shape
+        fwd = expo_curve(apply_deadzone(fwd, cfg.deadzone), cfg.expo)
+        turn = expo_curve(apply_deadzone(turn, cfg.deadzone), cfg.expo)
+
+        # turbo scaling from trigger axis
+        scale = 1.0
+        if cfg.use_turbo:
+            try:
+                raw = float(js.get_axis(cfg.axis_turbo))  # often [-1..1]
+                turbo = (raw + 1.0) * 0.5                # -> [0..1]
+                turbo = clamp(turbo, 0.0, 1.0)
+                scale = cfg.turbo_min_scale + (1.0 - cfg.turbo_min_scale) * turbo
+            except Exception:
+                scale = 1.0
+
+        v_cmd = clamp(fwd * max_v * scale, -max_v, max_v)
+        w_cmd = clamp(turn * max_w * scale, -max_w, max_w)
+        return v_cmd, w_cmd
+
+    def _read_gripper(self, js: pygame.joystick.Joystick, cfg: DualsensePygameMapping) -> Optional[float]:
+        nb = js.get_numbuttons()
+        open_pressed = cfg.btn_gripper_open < nb and bool(js.get_button(cfg.btn_gripper_open))
+        close_pressed = cfg.btn_gripper_close < nb and bool(js.get_button(cfg.btn_gripper_close))
+
+        # if both pressed, do nothing
+        if open_pressed and not close_pressed:
+            return self._gripper_open_value
+        if close_pressed and not open_pressed:
+            return self._gripper_close_value
+        return None
+
+    def _read_home(self, js: pygame.joystick.Joystick, cfg: DualsensePygameMapping) -> bool:
+        nb = js.get_numbuttons()
+        return bool(cfg.btn_home < nb and js.get_button(cfg.btn_home))

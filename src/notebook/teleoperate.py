@@ -18,6 +18,7 @@ import time
 import pygame
 
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
+from lerobot_teleoperator_dualsense import DualsenseTeleop, DualsenseTeleopConfig
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
@@ -29,15 +30,18 @@ def main():
     # Create the robot and teleoperator configurations
     robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
     teleop_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
+    dualsense_config = DualsenseTeleopConfig()
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
     leader_arm = SO101Leader(teleop_arm_config)
+    dualsense = DualsenseTeleop(dualsense_config)
 
     # Connect to the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
     leader_arm.connect()
+    dualsense.connect()
 
     # Init rerun viewer
     init_rerun(session_name="jetsonbot_teleop")
@@ -67,7 +71,7 @@ def main():
         # print("ACTION:", leader)
         arm_action = {dst: leader[src] for src, dst in MAP.items() if src in leader}
 
-        base_action = robot.read_dualsense_base_action(js = robot.js, cfg = robot.cfg)
+        base_action = dualsense.get_action()
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
