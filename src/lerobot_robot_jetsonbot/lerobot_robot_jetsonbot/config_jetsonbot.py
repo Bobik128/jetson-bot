@@ -10,7 +10,7 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     front = (
         "nvarguscamerasrc sensor-id=0 ! "
         "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
-        "nvvidconv ! video/x-raw, width=640, height=480, format=BGRx ! "
+        "nvvidconv ! video/x-raw, width=424, height=240, format=BGRx ! "
         "videoconvert ! video/x-raw, format=BGR ! "
         "appsink drop=1 sync=false"
     )
@@ -18,14 +18,14 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     wrist = (
         "nvarguscamerasrc sensor-id=1 ! "
         "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
-        "nvvidconv ! video/x-raw, width=640, height=480, format=BGRx ! "
+        "nvvidconv ! video/x-raw, width=424, height=240, format=BGRx ! "
         "videoconvert ! video/x-raw, format=BGR ! "
         "appsink drop=1 sync=false"
     )
 
     return {
-        "front": OpenCVCameraConfig(index_or_path=front, fps=30, width=640, height=480),
-        "wrist": OpenCVCameraConfig(index_or_path=wrist, fps=30, width=640, height=480),
+        "front": OpenCVCameraConfig(index_or_path=front, fps=30, width=424, height=240),
+        "wrist": OpenCVCameraConfig(index_or_path=wrist, fps=30, width=424, height=240),
     }
 
 @RobotConfig.register_subclass("jetsonbot")
