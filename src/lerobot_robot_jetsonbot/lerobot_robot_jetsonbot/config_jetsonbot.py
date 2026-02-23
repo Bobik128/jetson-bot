@@ -10,7 +10,7 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     front = (
         "nvarguscamerasrc sensor-id=0 ! "
         "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
-        "nvvidconv ! video/x-raw, width=256, height=144, format=BGRx ! "
+        "nvvidconv ! video/x-raw, width=640, height=480, format=BGRx ! "
         "videoconvert ! video/x-raw, format=BGR ! "
         "appsink drop=1 sync=false"
     )
@@ -18,7 +18,7 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     wrist = (
         "nvarguscamerasrc sensor-id=1 ! "
         "video/x-raw(memory:NVMM), width=1920, height=1080, framerate=30/1 ! "
-        "nvvidconv ! video/x-raw, width=256, height=144, format=BGRx ! "
+        "nvvidconv ! video/x-raw, width=640, height=480, format=BGRx ! "
         "videoconvert ! video/x-raw, format=BGR ! "
         "appsink drop=1 sync=false"
     )
