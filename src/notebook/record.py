@@ -14,17 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re 
+from huggingface_hub import HfApi
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
-from lerobot_teleoperator_dualsense import DualsenseTeleop, DualsenseTeleopConfig
+from lerobot_teleoperator_dualsense import SOLeaderPlusDualsenseConfig, SOLeaderPlusDualsense, DualsenseTeleopConfig, MappedTeleop
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
+
 
 NUM_EPISODES = 2
 FPS = 30
@@ -33,17 +36,60 @@ RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "brick_moving"
 HF_REPO_ID = "Bobik553/jetson-bot"
 
+def next_available_repo_id(base_repo_id: str) -> str:
+    """
+    Returns base_repo_id if it doesn't exist on HF Hub, otherwise appends -N with the
+    next available integer suffix.
+    Example: Bobik553/jetson-bot -> Bobik553/jetson-bot-1, -2, ...
+    """
+    api = HfApi()
+
+    # If base doesn't exist, use it
+    try:
+        api.repo_info(repo_id=base_repo_id, repo_type="dataset")
+        base_exists = True
+    except Exception:
+        base_exists = False
+
+    if not base_exists:
+        return base_repo_id
+
+    # Otherwise list datasets for the user/org and find existing suffixes
+    owner, name = base_repo_id.split("/", 1)
+    existing = []
+    try:
+        # Returns DatasetInfo objects
+        for ds in api.list_datasets(author=owner):
+            if ds.id == base_repo_id:
+                existing.append(0)
+                continue
+            # match e.g. "Bobik553/jetson-bot-12"
+            m = re.fullmatch(re.escape(base_repo_id) + r"-(\d+)", ds.id)
+            if m:
+                existing.append(int(m.group(1)))
+    except Exception:
+        # If listing fails for some reason, fall back to brute-force probing
+        existing.append(0)
+
+    n = 1
+    if existing:
+        n = max(existing) + 1
+
+    return f"{base_repo_id}-{n}"
 
 def main():
     # Create the robot and teleoperator configurations
     robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
-    leader_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
-    dualsense_config = DualsenseTeleopConfig()
+    teleop_config = SOLeaderPlusDualsenseConfig(
+        so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
+        ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
+        allow_partial=False,
+    )
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
-    leader_arm = SO101Leader(leader_arm_config)
-    dualsense = DualsenseTeleop(dualsense_config)
+    teleop = SOLeaderPlusDualsense(teleop_config)
+    mapped_teleop = MappedTeleop(teleop)
 
     # TODO(Steven): Update this example to use pipelines
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
@@ -53,9 +99,13 @@ def main():
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
     dataset_features = {**action_features, **obs_features}
 
+    # Set unique repo name
+    repo_id = next_available_repo_id(HF_REPO_ID)
+    print("Using dataset repo_id:", repo_id)
+
     # Create the dataset
     dataset = LeRobotDataset.create(
-        repo_id=HF_REPO_ID,
+        repo_id=repo_id,
         fps=FPS,
         features=dataset_features,
         robot_type=robot.name,
@@ -66,15 +116,20 @@ def main():
     # Connect the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
-    leader_arm.connect()
-    dualsense.connect()
+    mapped_teleop.connect()
 
     # Rerun visualization
-    listener, events = init_keyboard_listener()
+    listener = None
+    events = {"stop_recording": False, "rerecord_episode": False, "exit_early": False}
+
+    tmp = init_keyboard_listener()
+    if tmp is not None:
+        listener, events = tmp
+
     init_rerun(session_name="jetsonbot_record")
 
     try:
-        if not robot.is_connected or not leader_arm.is_connected or not dualsense.is_connected:
+        if not robot.is_connected or not mapped_teleop.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
         print("Starting record loop...")
@@ -88,7 +143,7 @@ def main():
                 events=events,
                 fps=FPS,
                 dataset=dataset,
-                teleop=[leader_arm, dualsense],
+                teleop=mapped_teleop,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
@@ -106,7 +161,7 @@ def main():
                     robot=robot,
                     events=events,
                     fps=FPS,
-                    teleop=[leader_arm, dualsense],
+                    teleop=mapped_teleop,
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
@@ -129,9 +184,9 @@ def main():
         # Clean up
         log_say("Stop recording")
         robot.disconnect()
-        leader_arm.disconnect()
-        dualsense.disconnect()
-        listener.stop()
+        mapped_teleop.disconnect()
+        if listener is not None:
+            listener.stop()
 
         dataset.finalize()
         dataset.push_to_hub()

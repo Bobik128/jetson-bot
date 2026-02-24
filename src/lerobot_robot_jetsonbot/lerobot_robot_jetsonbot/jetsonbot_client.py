@@ -86,7 +86,7 @@ class JetsonBotClient(Robot):
                 "arm_wrist_flex.pos",
                 "arm_gripper.pos",
                 "motor_linear.vel",
-                "motor_anglular.vel",
+                "motor_angular.vel",
             ),
             float,
         )
