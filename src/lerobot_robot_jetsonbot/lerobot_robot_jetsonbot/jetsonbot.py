@@ -233,7 +233,8 @@ class JetsonBot(Robot):
         ax, ay, az = imu_sample.accel
 
         imu_state = {
-            wx, ay
+            "gyro_yaw": float(wx), 
+            "accel_x":  float(ay),
         }
 
         obs_dict = {**arm_state, **base_vel, **imu_state}
