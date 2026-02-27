@@ -44,17 +44,19 @@ def _i2c_read_retry(bus, addr, reg, length=1, retries=5, delay=0.01):
 @dataclass
 class IMURates:
     dt: float
-    gyro: Tuple[float, float, float]                 # deg/s or rad/s (config)
-    accel: Optional[Tuple[float, float, float]]      # m/s^2 or g (config)
+    gyro: Tuple[float, float, float]                  # deg/s or rad/s
+    accel: Optional[Tuple[float, float, float]]       # m/s^2 or g
+    vel: Optional[Tuple[float, float, float]]         # m/s (integrated from accel)
 
 
 class MPU6050Rates:
     """
-    Outputs instantaneous IMU rates for ML:
+    Outputs IMU rates for ML:
       - gyro angular velocity (deg/s default)
-      - accel (m/s^2 default, optional)
+      - accel (m/s^2 default)
+      - velocity estimate (m/s) by integrating accel over time (optional)
 
-    No angle integration.
+    WARNING: velocity integration drifts unless accel bias + gravity are handled.
     """
 
     def __init__(
@@ -63,9 +65,11 @@ class MPU6050Rates:
         addr: int = MPU6050_ADDR,
         calibrate: bool = True,
         include_accel: bool = True,
-        gyro_units: str = "dps",      # "dps" or "rads"
-        accel_units: str = "mps2",    # "mps2" or "g"
+        gyro_units: str = "dps",       # "dps" or "rads"
+        accel_units: str = "mps2",     # "mps2" or "g"
         accel_remove_gravity: bool = False,
+        integrate_velocity: bool = True,              # <-- new
+        vel_clamp_mps: Optional[float] = None,         # <-- new (limits drift)
         dt_clamp: Tuple[float, float] = (1e-4, 0.1),
     ):
         self.bus = smbus2.SMBus(bus_idx)
@@ -77,11 +81,18 @@ class MPU6050Rates:
         self.gyro_units = gyro_units
         self.accel_units = accel_units
         self.accel_remove_gravity = accel_remove_gravity
+        self.integrate_velocity = integrate_velocity and include_accel
+        self.vel_clamp_mps = vel_clamp_mps
         self.dt_min, self.dt_max = dt_clamp
 
         # biases in raw LSB
         self.bias_gx = self.bias_gy = self.bias_gz = 0.0
         self.bias_ax = self.bias_ay = self.bias_az = 0.0
+
+        # integrated velocity state (m/s)
+        self._vx = 0.0
+        self._vy = 0.0
+        self._vz = 0.0
 
         self._last_t = time.time()
 
@@ -169,8 +180,8 @@ class MPU6050Rates:
         ay_g = (ay_raw - self.bias_ay) / ACCEL_SCALE_2G
         az_g = (az_raw - self.bias_az) / ACCEL_SCALE_2G
 
-        # Optional crude gravity removal (only valid if axes are consistently aligned to gravity)
         if self.accel_remove_gravity:
+            # only valid if your Z axis is consistently aligned with gravity
             az_g -= 1.0
 
         if self.accel_units == "g":
@@ -179,10 +190,27 @@ class MPU6050Rates:
             return ax_g * G, ay_g * G, az_g * G
         raise ValueError("accel_units must be 'mps2' or 'g'")
 
-    # ------- main API -------
+    # ------- helpers -------
 
     def reset_timebase(self):
         self._last_t = time.time()
+
+    def reset_velocity(self):
+        self._vx = self._vy = self._vz = 0.0
+
+    def reset_all(self):
+        self.reset_timebase()
+        self.reset_velocity()
+
+    def _clamp_vel(self):
+        if self.vel_clamp_mps is None:
+            return
+        m = self.vel_clamp_mps
+        self._vx = max(-m, min(m, self._vx))
+        self._vy = max(-m, min(m, self._vy))
+        self._vz = max(-m, min(m, self._vz))
+
+    # ------- main API -------
 
     def sample(self) -> IMURates:
         now = time.time()
@@ -195,5 +223,23 @@ class MPU6050Rates:
             dt = self.dt_max
 
         gyro = self.read_gyro()
-        accel = self.read_accel() if self.include_accel else None
-        return IMURates(dt=dt, gyro=gyro, accel=accel)
+
+        accel = None
+        vel = None
+
+        if self.include_accel:
+            accel = self.read_accel()
+
+            # If accel is in g, convert to m/s^2 before integrating velocity
+            ax, ay, az = accel
+            if self.accel_units == "g":
+                ax *= G; ay *= G; az *= G
+
+            if self.integrate_velocity:
+                self._vx += ax * dt
+                self._vy += ay * dt
+                self._vz += az * dt
+                self._clamp_vel()
+                vel = (self._vx, self._vy, self._vz)
+
+        return IMURates(dt=dt, gyro=gyro, accel=accel, vel=vel)
