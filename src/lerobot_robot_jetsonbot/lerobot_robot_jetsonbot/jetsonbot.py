@@ -22,6 +22,7 @@ from lerobot.robots.utils import ensure_safe_goal_position
 from .config_jetsonbot import JetsonBotConfig
 
 from .shared.esp32_link import ESP32Link
+from .shared.imu_mpu import MPU6050Rates
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,9 @@ class JetsonBot(Robot):
         # Base with 2 wheels
         self.esp_link = ESP32Link(self.config.esp_port, self.config.esp_baud, self.config.esp_timeout)
         self.esp_link.start_reader()
+
+        self.imu = MPU6050Rates(include_accel=True, gyro_units="dps", accel_units="mps2")
+
         time.sleep(1)
         
         self.cameras = make_cameras_from_configs(config.cameras)
@@ -224,7 +228,15 @@ class JetsonBot(Robot):
 
         arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 
-        obs_dict = {**arm_state, **base_vel}
+        imu_sample = self.imu.sample()
+        wx, wy, wz = imu_sample.gyro
+        ax, ay, az = imu_sample.accel
+
+        imu_state = {
+            wx, ay
+        }
+
+        obs_dict = {**arm_state, **base_vel, **imu_state}
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")

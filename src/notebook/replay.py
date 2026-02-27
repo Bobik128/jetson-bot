@@ -1,19 +1,9 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
 
+import argparse
 import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -22,23 +12,48 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
-EPISODE_IDX = 0
+
+def load_episode_frames(dataset: LeRobotDataset, episode_idx: int):
+    """
+    Dataset v3 stores chunked episodes; safest is to filter by episode_index.
+    """
+    # Filter dataset to only include frames from the specified episode
+    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == episode_idx)
+    if len(episode_frames) == 0:
+        raise ValueError(
+            f"No frames found for episode_index={episode_idx}. "
+            f"Available episode_index values may differ from what you expect."
+        )
+    return episode_frames
 
 
 def main():
-    # Initialize the robot config
-    robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo_id", required=True, help='HF dataset repo, e.g. "Bobik553/jetson-bot-3"')
+    ap.add_argument("--episode", type=int, default=0, help="episode_index to replay (default: 0)")
+    ap.add_argument("--remote_ip", default="100.82.250.91", help="JetsonBot remote IP")
+    ap.add_argument("--robot_id", default="jetson-bot", help="Robot id string")
+    ap.add_argument("--speed", type=float, default=1.0, help="Replay speed multiplier (1.0 = real-time)")
+    args = ap.parse_args()
 
-    # Initialize the robot
+    if args.speed <= 0:
+        raise ValueError("--speed must be > 0")
+
+    # Initialize robot
+    robot_config = JetsonBotClientConfig(remote_ip=args.remote_ip, id=args.robot_id)
     robot = JetsonBotClient(robot_config)
 
-    # Fetch the dataset to replay
-    dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
-    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
+    # Load dataset (pulls from HF Hub)
+    dataset = LeRobotDataset(args.repo_id)
+    episode_frames = load_episode_frames(dataset, args.episode)
+
+    # Pull only ACTION column(s)
     actions = episode_frames.select_columns(ACTION)
 
-    # Connect to the robot
+    # Action names are the canonical schema for replay
+    action_names = dataset.features[ACTION]["names"]
+
+    # Connect to robot
     robot.connect()
 
     try:
@@ -46,20 +61,22 @@ def main():
             raise ValueError("Robot is not connected!")
 
         print("Starting replay loop...")
-        log_say(f"Replaying episode {EPISODE_IDX}")
+        log_say(f"Replaying repo={args.repo_id} episode={args.episode} frames={len(episode_frames)}")
+
+        dt_target = (1.0 / float(dataset.fps)) / args.speed
+
         for idx in range(len(episode_frames)):
             t0 = time.perf_counter()
 
-            # Get recorded action from dataset
-            action = {
-                name: float(actions[idx][ACTION][i])
-                for i, name in enumerate(dataset.features[ACTION]["names"])
-            }
+            # Build action dict from the dataset row
+            row = actions[idx][ACTION]  # list/array of floats
+            action = {name: float(row[i]) for i, name in enumerate(action_names)}
 
-            # Send action to robot
-            _ = robot.send_action(action)
+            # Send to robot
+            robot.send_action(action)
 
-            precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+            precise_sleep(max(dt_target - (time.perf_counter() - t0), 0.0))
+
     finally:
         robot.disconnect()
 

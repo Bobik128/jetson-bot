@@ -43,11 +43,11 @@ class DualsensePygameMapping:
     invert_turn: bool = False
 
     deadzone: float = 0.08
-    expo: float = 0.25
+    expo: float = 0.2
 
     # Base speed limits
-    max_v_mps: float = 0.35
-    max_w_radps: float = 2.0
+    max_v_mps: float = 0.8
+    max_w_radps: float = 3.0
 
     # Turbo behavior
     use_turbo: bool = True
@@ -100,7 +100,7 @@ class DualsenseTeleop(Teleoperator):
         self._map = DualsensePygameMapping()
 
         # stateful helpers
-        self._speed_index = 0
+        self._speed_index = 1
         self._last_hat_y = 0
 
         # gripper state (you can change this convention)
