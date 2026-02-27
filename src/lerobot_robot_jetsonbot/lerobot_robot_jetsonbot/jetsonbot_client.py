@@ -87,8 +87,7 @@ class JetsonBotClient(Robot):
                 "arm_gripper.pos",
                 "motor_linear.vel",
                 "motor_angular.vel",
-                "gyro_yaw", 
-                "accel_x",
+                "gyro_yaw",
             ),
             float,
         )

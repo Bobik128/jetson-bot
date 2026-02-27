@@ -230,11 +230,9 @@ class JetsonBot(Robot):
 
         imu_sample = self.imu.sample()
         wx, wy, wz = imu_sample.gyro
-        vx, vy, vz = imu_sample.vel
 
         imu_state = {
             "gyro_yaw": float(wx), 
-            "accel_x":  float(vx),
         }
 
         obs_dict = {**arm_state, **base_vel, **imu_state}
