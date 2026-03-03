@@ -21,7 +21,7 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
-from lerobot_teleoperator_dualsense import SOLeaderPlusDualsenseConfig, SOLeaderPlusDualsense, DualsenseTeleopConfig, MappedTeleop
+from lerobot_teleoperator_dualsense import SOLeaderPlusDualsenseConfig, SOLeaderPlusDualsense, DualsenseTeleopConfig, MappedTeleop, DualsenseEpisodeButtons, DualsenseEpisodeListener
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
@@ -29,9 +29,9 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 
-NUM_EPISODES = 2
+NUM_EPISODES = 20
 FPS = 30
-EPISODE_TIME_SEC = 30
+EPISODE_TIME_SEC = 220
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "brick_moving"
 HF_REPO_ID = "Bobik553/jetson-bot"
@@ -118,13 +118,25 @@ def main():
     robot.connect()
     mapped_teleop.connect()
 
-    # Rerun visualization
-    listener = None
-    events = {"stop_recording": False, "rerecord_episode": False, "exit_early": False}
+    ds_js = teleop.ds.joystick
 
-    tmp = init_keyboard_listener()
-    if tmp is not None:
-        listener, events = tmp
+    if ds_js is None:
+        raise RuntimeError("Could not access DualSense joystick instance (ds_js is None). Expose it from your teleop wrapper.")
+    
+    btns = DualsenseEpisodeButtons(
+        btn_pause_toggle=9,      # Options
+        btn_exit_early=1,        # Circle
+        btn_rerecord_episode=2,  # Square
+        btn_stop_recording=8,    # Create
+        poll_hz=60.0,
+        debounce_sec=0.20,
+        pause_key="paused",
+    )
+    events = {}
+
+    controller_listener = DualsenseEpisodeListener(ds_js, events, btns)
+    controller_listener.start()
+    listener = controller_listener
 
     init_rerun(session_name="jetsonbot_record")
 

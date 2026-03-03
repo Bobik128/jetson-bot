@@ -211,6 +211,10 @@ class DualsenseTeleop(Teleoperator):
         #         action["home"] = True
 
         return action
+    
+    @property
+    def joystick(self) -> Optional[pygame.joystick.Joystick]:
+        return self._js
 
     # -------------------------
     # internals
