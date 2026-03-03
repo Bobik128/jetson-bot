@@ -78,6 +78,11 @@ class JetsonBot(Robot):
             float,
         )
 
+    @cached_property
+    def _obs_state_ft(self) -> dict[str, type]:
+        # observation-only state = state_ft + gyro
+        return {**self._state_ft, "gyro_yaw.vel": float}
+
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
@@ -86,7 +91,7 @@ class JetsonBot(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft, **{"gyro_yaw.vel": float}}
+        return {**self._obs_state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:

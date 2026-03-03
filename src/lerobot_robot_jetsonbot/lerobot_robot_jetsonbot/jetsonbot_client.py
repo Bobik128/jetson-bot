@@ -90,10 +90,21 @@ class JetsonBotClient(Robot):
             ),
             float,
         )
+    
+    @cached_property
+    def _obs_state_ft(self) -> dict[str, type]:
+        # observation-only state = state_ft + gyro
+        return {**self._state_ft, "gyro_yaw.vel": float}
+    
 
     @cached_property
     def _state_order(self) -> tuple[str, ...]:
         return tuple(self._state_ft.keys())
+        
+    @cached_property
+    def _obs_state_order(self) -> tuple[str, ...]:
+        # used for observation dict + OBS_STATE vector
+        return tuple(self._obs_state_ft.keys())
 
     @cached_property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
@@ -101,7 +112,7 @@ class JetsonBotClient(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft, **{"gyro_yaw.vel": float}}
+        return {**self._obs_state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -249,10 +260,8 @@ class JetsonBotClient(Robot):
     ) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """Extracts frames, and state from the parsed observation."""
 
-        flat_state = {key: observation.get(key, 0.0) for key in self._state_order}
-
-        state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
-
+        flat_state = {key: observation.get(key, 0.0) for key in self._obs_state_order}
+        state_vec = np.array([flat_state[key] for key in self._obs_state_order], dtype=np.float32)
         obs_dict: RobotObservation = {**flat_state, OBS_STATE: state_vec}
 
         # Decode images
