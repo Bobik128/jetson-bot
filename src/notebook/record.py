@@ -29,12 +29,12 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 
-NUM_EPISODES = 20
+NUM_EPISODES = 60
 FPS = 30
-EPISODE_TIME_SEC = 220
+EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "brick_moving"
-HF_REPO_ID = "Bobik553/jetson-bot"
+HF_REPO_ID = "Bobik553/jetson-bot_block-in-box"
 
 def next_available_repo_id(base_repo_id: str) -> str:
     """
@@ -79,7 +79,8 @@ def next_available_repo_id(base_repo_id: str) -> str:
 
 def main():
     # Create the robot and teleoperator configurations
-    robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
+    # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
+    robot_config = JetsonBotClientConfig(remote_ip="10.201.177.119", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
         so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
@@ -126,7 +127,7 @@ def main():
     btns = DualsenseEpisodeButtons(
         btn_pause_toggle=9,      # Options
         btn_exit_early=1,        # Circle
-        btn_rerecord_episode=2,  # Square
+        btn_rerecord_episode=2,  # triangle
         btn_stop_recording=8,    # Create
         poll_hz=60.0,
         debounce_sec=0.20,
@@ -165,7 +166,7 @@ def main():
             )
 
             # Reset the environment if not stopping or re-recording
-            if not events["stop_recording"] and (
+            if not events["stop_recording"] and not events["exit_early"] and (
                 (recorded_episodes < NUM_EPISODES - 1) or events["rerecord_episode"]
             ):
                 log_say("Reset the environment")

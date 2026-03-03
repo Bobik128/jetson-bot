@@ -96,7 +96,11 @@ class DualsenseEpisodeListener:
 
         prev = self._last.get(btn, False)
         self._last[btn] = cur
-        return (not prev) and cur
+        val = (not prev) and cur
+        if val:
+            print("bressed button", btn)
+            print(self._events)
+        return val
 
     def _run(self) -> None:
         dt = 1.0 / max(1.0, float(self._m.poll_hz))
