@@ -87,7 +87,6 @@ class JetsonBotClient(Robot):
                 "arm_gripper.pos",
                 "motor_linear.vel",
                 "motor_angular.vel",
-                "gyro_yaw.vel",
             ),
             float,
         )
@@ -102,7 +101,7 @@ class JetsonBotClient(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft, **{"gyro_yaw.vel": float}}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
