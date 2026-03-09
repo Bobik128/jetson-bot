@@ -31,8 +31,8 @@ from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 60
 FPS = 30
-EPISODE_TIME_SEC = 60
-RESET_TIME_SEC = 10
+EPISODE_TIME_SEC = 90
+RESET_TIME_SEC = 20
 TASK_DESCRIPTION = "brick_moving"
 HF_REPO_ID = "Bobik553/jetson-bot_block-in-box"
 
