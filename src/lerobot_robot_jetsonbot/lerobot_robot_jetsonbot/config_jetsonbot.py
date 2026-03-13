@@ -18,7 +18,7 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     wrist = (
         "nvarguscamerasrc sensor-id=1 ! "
         "video/x-raw(memory:NVMM), width=1600, height=900, framerate=30/1 ! "
-        "nvvidconv ! video/x-raw, width=320, height=180, format=BGRx ! "
+        "nvvidconv ! video/x-raw, width=256, height=144, format=BGRx ! "
         "videoconvert ! video/x-raw, format=BGR ! "
         "appsink drop=1 sync=false"
     )
