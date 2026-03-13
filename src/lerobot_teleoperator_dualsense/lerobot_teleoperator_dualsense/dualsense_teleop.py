@@ -42,7 +42,7 @@ class DualsensePygameMapping:
     invert_forward: bool = True
     invert_turn: bool = False
 
-    deadzone: float = 0.08
+    deadzone: float = 0.16
     expo: float = 0.2
 
     # Base speed limits
