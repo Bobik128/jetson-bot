@@ -50,7 +50,7 @@ TASK_DESCRIPTION = "blue_brick_moving"
 HF_MODEL_ID = "Bobik553/jetson-bot_policy-blue_cubes_in_red"
 
 # Use a separate repo for eval rollouts.
-HF_EVAL_DATASET_BASE_ID = "Bobik553/jetson-bot_blue-block-in-box_eval"
+HF_EVAL_DATASET_BASE_ID = "Bobik553/jetson-bot_blue-block-on-box_eval-help"
 
 
 def next_available_repo_id(base_repo_id: str) -> str:
