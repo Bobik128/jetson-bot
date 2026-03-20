@@ -42,15 +42,15 @@ from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 60
 FPS = 30
-EPISODE_TIME_SEC = 120
+EPISODE_TIME_SEC = 180
 RESET_TIME_SEC = 20
 
-TASK_DESCRIPTION = "brick_moving"
+TASK_DESCRIPTION = "blue_brick_moving"
 
-HF_MODEL_ID = "Bobik553/jetson-bot_policy"
+HF_MODEL_ID = "Bobik553/jetson-bot_policy-blue_cubes_in_red"
 
 # Use a separate repo for eval rollouts.
-HF_EVAL_DATASET_BASE_ID = "Bobik553/jetson-bot_block-in-box_eval"
+HF_EVAL_DATASET_BASE_ID = "Bobik553/jetson-bot_blue-block-in-box_eval"
 
 
 def next_available_repo_id(base_repo_id: str) -> str:
@@ -97,7 +97,7 @@ def main():
     # Robot + teleop config
     # -------------------------------------------------------------------------
     robot_config = JetsonBotClientConfig(
-        remote_ip="10.201.177.119",
+        remote_ip="10.98.56.119",
         id="jetson-bot",
     )
 
@@ -220,6 +220,7 @@ def main():
                 policy=policy,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
+                teleop=mapped_teleop, # Teleop
                 dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
@@ -227,6 +228,7 @@ def main():
                 teleop_action_processor=teleop_action_processor,
                 robot_action_processor=robot_action_processor,
                 robot_observation_processor=robot_observation_processor,
+                vals_to_add_while_policy=["motor_linear.vel", "motor_angular.vel"],
             )
 
             # -------------------------------------------------------------

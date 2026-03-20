@@ -33,8 +33,8 @@ NUM_EPISODES = 60
 FPS = 30
 EPISODE_TIME_SEC = 90
 RESET_TIME_SEC = 20
-TASK_DESCRIPTION = "brick_moving"
-HF_REPO_ID = "Bobik553/jetson-bot_block-in-box"
+TASK_DESCRIPTION = "blue_brick_moving"
+HF_REPO_ID = "Bobik553/jetson-bot_blue_block-on-red-box"
 
 def next_available_repo_id(base_repo_id: str) -> str:
     """
@@ -80,7 +80,7 @@ def next_available_repo_id(base_repo_id: str) -> str:
 def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
-    robot_config = JetsonBotClientConfig(remote_ip="10.201.177.119", id="jetson-bot")
+    robot_config = JetsonBotClientConfig(remote_ip="10.98.56.119", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
         so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),

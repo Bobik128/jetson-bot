@@ -29,7 +29,7 @@ FPS = 30
 def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
-    robot_config = JetsonBotClientConfig(remote_ip="10.201.177.119", id="jetson-bot")
+    robot_config = JetsonBotClientConfig(remote_ip="10.98.56.119", id="jetson-bot")
     # teleop_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
     # dualsense_config = DualsenseTeleopConfig()
     teleop_config = SOLeaderPlusDualsenseConfig(
