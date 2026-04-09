@@ -3,7 +3,9 @@ lerobot_teleoperator_dualsense/__init__.py
 lerobot_teleoperator_dualsense/combo_teleop.py
 lerobot_teleoperator_dualsense/config_teleop.py
 lerobot_teleoperator_dualsense/config_teleop_combo.py
+lerobot_teleoperator_dualsense/dualsense_listener.py
 lerobot_teleoperator_dualsense/dualsense_teleop.py
+lerobot_teleoperator_dualsense/mapped_teleop.py
 lerobot_teleoperator_dualsense.egg-info/PKG-INFO
 lerobot_teleoperator_dualsense.egg-info/SOURCES.txt
 lerobot_teleoperator_dualsense.egg-info/dependency_links.txt

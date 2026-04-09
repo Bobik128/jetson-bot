@@ -1,26 +1,12 @@
-# !/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#!/usr/bin/env python
 
 import re
 from huggingface_hub import HfApi
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 
@@ -47,7 +33,10 @@ RESET_TIME_SEC = 20
 
 TASK_DESCRIPTION = "blue_brick_moving"
 
-HF_MODEL_ID = "Bobik553/jetson-bot_policy-blue_cubes_in_red-2"
+# IMPORTANT:
+# This should point to a SmolVLA checkpoint, not an ACT checkpoint.
+# In practice, use your own fine-tuned SmolVLA model.
+HF_MODEL_ID = "Bobik553/jetson-bot_policy-smolvla-blue_on_red"
 
 # Use a separate repo for eval rollouts.
 HF_EVAL_DATASET_BASE_ID = "Bobik553/jetson-bot_blue-block-on-box_eval-help"
@@ -97,7 +86,7 @@ def main():
     # Robot + teleop config
     # -------------------------------------------------------------------------
     robot_config = JetsonBotClientConfig(
-        remote_ip="10.98.56.119",
+        remote_ip="127.0.0.1",
         id="jetson-bot",
     )
 
@@ -121,9 +110,9 @@ def main():
     mapped_teleop = MappedTeleop(teleop)
 
     # -------------------------------------------------------------------------
-    # Policy
+    # Policy: SmolVLA
     # -------------------------------------------------------------------------
-    policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+    policy = SmolVLAPolicy.from_pretrained(HF_MODEL_ID)
 
     # -------------------------------------------------------------------------
     # Processors
@@ -154,10 +143,13 @@ def main():
 
     # -------------------------------------------------------------------------
     # Policy pre/post processors
+    #
+    # SmolVLA docs/example use:
+    # make_pre_post_processors(policy.config, model_id, ...)
     # -------------------------------------------------------------------------
     preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=HF_MODEL_ID,
+        policy.config,
+        HF_MODEL_ID,
         dataset_stats=dataset.meta.stats,
         preprocessor_overrides={
             "device_processor": {"device": str(policy.config.device)}
@@ -189,13 +181,18 @@ def main():
         debounce_sec=0.20,
         pause_key="paused",
     )
-    events = {}
+    events = {
+        "stop_recording": False,
+        "exit_early": False,
+        "rerecord_episode": False,
+        "paused": False,
+    }
 
     controller_listener = DualsenseEpisodeListener(ds_js, events, btns)
     controller_listener.start()
     listener = controller_listener
 
-    init_rerun(session_name="jetsonbot_evaluate")
+    init_rerun(session_name="jetsonbot_evaluate_smolvla")
 
     try:
         if not robot.is_connected or not mapped_teleop.is_connected:
@@ -206,7 +203,7 @@ def main():
 
         while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
             log_say(
-                f"Running inference, recording eval episode "
+                f"Running SmolVLA inference, recording eval episode "
                 f"{recorded_episodes + 1} of {NUM_EPISODES}"
             )
 
@@ -220,10 +217,10 @@ def main():
                 policy=policy,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
-                teleop=mapped_teleop, # Teleop
+                teleop=mapped_teleop,  # optional/manual override path
                 dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
-                single_task=TASK_DESCRIPTION,
+                single_task=TASK_DESCRIPTION,  # important for SmolVLA
                 display_data=True,
                 teleop_action_processor=teleop_action_processor,
                 robot_action_processor=robot_action_processor,
