@@ -13,7 +13,7 @@ import math
 
 import scservo_sdk as scs
 
-from gst_cam import GstCam
+from lerobot_robot_jetsonbot.lerobot_robot_jetsonbot.gst_cam import GstCam
 from shared.constants import FRAME_SIZE, MAX_V, MAX_W
 from shared.esp32_link import ESP32Link
 from shared.imu_mpu6050 import MPU6050GyroYaw

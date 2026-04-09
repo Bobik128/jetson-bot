@@ -7,7 +7,7 @@ import cv2
 import torch
 import torch.nn as nn
 
-from gst_cam import GstCam
+from lerobot_robot_jetsonbot.lerobot_robot_jetsonbot.gst_cam import GstCam
 
 from shared.constants import MAX_V, MAX_W
 from shared.esp32_link import ESP32Link
