@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-import gi
+import sys
+
+try:
+    import gi
+except ModuleNotFoundError:
+    sys.path.append("/usr/lib/python3/dist-packages")
+    import gi
+
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 import numpy as np
