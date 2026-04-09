@@ -28,8 +28,8 @@ def jetsonbot_cameras_config() -> dict[str, CameraConfig]:
     #     "wrist": OpenCVCameraConfig(index_or_path=wrist, fps=30, width=256, height=144),
     # }
     return {
-        "front": OpenCVCameraConfig(index_or_path="/dev/video0", fps=30, width=256, height=144),
-        "wrist": OpenCVCameraConfig(index_or_path="/dev/video1", fps=30, width=256, height=144),
+        "front": OpenCVCameraConfig(index_or_path="/dev/video0", fps=21, width=3280, height=2464),
+        "wrist": OpenCVCameraConfig(index_or_path="/dev/video1", fps=30, width=3840, height=2160),
     }
 
 @RobotConfig.register_subclass("jetsonbot")
