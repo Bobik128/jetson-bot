@@ -16,8 +16,10 @@
 
 import time
 import pygame
-
-from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
+from lerobot_robot_jetsonbot.jetsonbot_client import JetsonBotClient
+from lerobot_robot_jetsonbot.config_jetsonbot import JetsonBotClientConfig
+from lerobot_teleoperator_dualsense.dummy_leader_plus_dualsense import DummySOLeaderPlusDualsense
+from lerobot_teleoperator_dualsense.config_dummy_teleop_combo import DummySOLeaderPlusDualsenseConfig
 from lerobot_teleoperator_dualsense import SOLeaderPlusDualsenseConfig, SOLeaderPlusDualsense, DualsenseTeleopConfig, MappedTeleop
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
@@ -29,18 +31,21 @@ FPS = 30
 def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
+
     robot_config = JetsonBotClientConfig(remote_ip="10.98.56.119", id="jetson-bot")
-    # teleop_arm_config = SO101LeaderConfig(port="/dev/ttyACM0", id="the_leader")
-    # dualsense_config = DualsenseTeleopConfig()
-    teleop_config = SOLeaderPlusDualsenseConfig(
-        so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
+    # teleop_config = SOLeaderPlusDualsenseConfig(
+    #     so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
+    #     ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
+    #     allow_partial=True,
+    # )
+    teleop_config = DummySOLeaderPlusDualsenseConfig(
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
-        allow_partial=False,
     )
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
-    teleop = SOLeaderPlusDualsense(teleop_config)
+    # teleop = SOLeaderPlusDualsense(teleop_config)
+    teleop = DummySOLeaderPlusDualsense(teleop_config)
     mapped_teleop = MappedTeleop(teleop)
 
     # Connect to the robot and teleoperator
