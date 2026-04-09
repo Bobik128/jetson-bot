@@ -6,23 +6,17 @@ from functools import cached_property
 from itertools import chain
 from typing import Dict
 
-import numpy as np
-
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-
 from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
-from .config_jetsonbot import JetsonBotConfig
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
+from .config_jetsonbot import JetsonBotConfig
+from .gst_cam import GstCam
 from .shared.esp32_link import ESP32Link
 from .shared.imu_mpu import MPU6050Rates
-from .gst_cam import GstCam
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +30,6 @@ def map_range(x, in_min, in_max, out_min, out_max):
 
 
 class JetsonBot(Robot):
-
     config_class = JetsonBotConfig
     name = "jetsonbot"
 
@@ -64,9 +57,10 @@ class JetsonBot(Robot):
 
         time.sleep(1)
 
-        # Managed manually instead of LeRobot OpenCV cameras
-        self.cameras = {}
+        self.cameras = {}  # keep empty; we are not using LeRobot OpenCV cameras
         self._gst_cams = {}
+        self.camera_keys = ["front", "wrist"]
+
         self._camera_frame_size = (256, 144)  # (width, height)
         self._camera_base_dir = "/tmp/jetsonbot_cam"
 
@@ -90,7 +84,6 @@ class JetsonBot(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        # GstCam returns RGB images resized to (144, 256, 3)
         return {
             "front": (self._camera_frame_size[1], self._camera_frame_size[0], 3),
             "wrist": (self._camera_frame_size[1], self._camera_frame_size[0], 3),
@@ -107,7 +100,7 @@ class JetsonBot(Robot):
     @property
     def is_connected(self) -> bool:
         cams_ok = all(cam.alive for cam in self._gst_cams.values()) if self._gst_cams else True
-        return self.bus.is_connected and cams_ok and self.esp_link.is_connected()
+        return self.bus.is_connected and self.esp_link.is_connected() and cams_ok
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -115,6 +108,7 @@ class JetsonBot(Robot):
             raise ConnectionError(f"Could not connect to ESP32 on port {self.config.esp_port}")
 
         self.bus.connect()
+
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -123,17 +117,19 @@ class JetsonBot(Robot):
 
         os.makedirs(self._camera_base_dir, exist_ok=True)
 
-        # Front camera: IMX219 on sensor 0
+        # Start the lighter camera first
         self._gst_cams["front"] = GstCam(
             base_dir=self._camera_base_dir,
             frame_size=self._camera_frame_size,
             sensor_id=0,
-            capture_width=1920,
-            capture_height=1080,
+            capture_width=1280,
+            capture_height=720,
             capture_fps=30,
         )
 
-        # Wrist camera: IMX477 on sensor 1
+        time.sleep(0.8)
+
+        # Start the second camera after a delay
         self._gst_cams["wrist"] = GstCam(
             base_dir=self._camera_base_dir,
             frame_size=self._camera_frame_size,
@@ -143,8 +139,13 @@ class JetsonBot(Robot):
             capture_fps=30,
         )
 
+        if not self._gst_cams["front"].alive:
+            raise RuntimeError("Front camera failed to start")
+        if not self._gst_cams["wrist"].alive:
+            raise RuntimeError("Wrist camera failed to start")
+
         self.configure()
-        logger.info(f"{self} connected.")
+        logger.info("%s connected.", self)
 
     @property
     def is_calibrated(self) -> bool:
@@ -156,11 +157,11 @@ class JetsonBot(Robot):
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
             if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                logger.info("Writing calibration file associated with the id %s to the motors", self.id)
                 self.bus.write_calibration(self.calibration)
                 return
 
-        logger.info(f"\nRunning calibration of {self}")
+        logger.info("\nRunning calibration of %s", self)
 
         motors = self.arm_motors
 
@@ -171,9 +172,7 @@ class JetsonBot(Robot):
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
 
-        full_turn_motor = [
-            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist_roll"])
-        ]
+        full_turn_motor = [motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist_roll"])]
         unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
 
         print(
@@ -207,7 +206,6 @@ class JetsonBot(Robot):
             self.bus.write("P_Coefficient", name, 16)
             self.bus.write("I_Coefficient", name, 0)
             self.bus.write("D_Coefficient", name, 32)
-
         self.bus.enable_torque()
 
     def setup_motors(self) -> None:
@@ -230,9 +228,7 @@ class JetsonBot(Robot):
     @staticmethod
     def _raw_to_degps(raw_speed: int) -> float:
         steps_per_deg = 4096.0 / 360.0
-        magnitude = raw_speed
-        degps = magnitude / steps_per_deg
-        return degps
+        return raw_speed / steps_per_deg
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -244,7 +240,7 @@ class JetsonBot(Robot):
             v = 0.0
             w = 0.0
 
-        base_vel: dict = {
+        base_vel = {
             "motor_linear.vel": v,
             "motor_angular.vel": w,
         }
@@ -261,13 +257,14 @@ class JetsonBot(Robot):
         obs_dict = {**arm_state, **base_vel, **imu_state}
 
         dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+        logger.debug("%s read state: %.1fms", self, dt_ms)
 
-        for cam_key, cam in self._gst_cams.items():
+        for cam_key in self.camera_keys:
+            cam = self._gst_cams[cam_key]
             start = time.perf_counter()
             obs_dict[cam_key] = cam.get_frame_rgb(timeout_s=1.0)
             dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            logger.debug("%s read %s: %.1fms", self, cam_key, dt_ms)
 
         return obs_dict
 
@@ -286,7 +283,6 @@ class JetsonBot(Robot):
         fillet_r = 2.0
         keepout_r = 5.0
         margin = 0.01
-
         bx = 4.8
         by = -0.6
 
@@ -376,11 +372,9 @@ class JetsonBot(Robot):
         if self.config.max_relative_target is not None:
             present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
-            arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-            arm_goal_pos = arm_safe_goal_pos
+            arm_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
-
         if arm_goal_pos_raw:
             self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
 
@@ -399,12 +393,11 @@ class JetsonBot(Robot):
         self.stop_base()
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
 
-        for cam in self._gst_cams.values():
+        for cam_key, cam in self._gst_cams.items():
             try:
                 cam.release()
             except Exception as e:
-                logger.warning(f"Failed to release camera cleanly: {e}")
+                logger.warning("Failed to release camera %s cleanly: %s", cam_key, e)
 
         self._gst_cams.clear()
-
-        logger.info(f"{self} disconnected.")
+        logger.info("%s disconnected.", self)
