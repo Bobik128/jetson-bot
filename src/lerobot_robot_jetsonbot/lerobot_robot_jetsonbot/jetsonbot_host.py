@@ -98,14 +98,13 @@ def main(cfg: JetsonBotServerConfig):
                 last_observation = {}
 
             # Encode image arrays to base64 JPEG
-            for cam_key in getattr(robot, "camera_keys", []):
+            for cam_key in robot.cameras:
                 img = last_observation.get(cam_key)
                 if img is None:
                     last_observation[cam_key] = ""
                     continue
 
                 try:
-                    # GstCam returns RGB; cv2.imencode expects BGR
                     img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                     ret, buffer = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
                     last_observation[cam_key] = base64.b64encode(buffer).decode("utf-8") if ret else ""

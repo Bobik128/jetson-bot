@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import os
 import sys
 import time
@@ -6,7 +8,16 @@ import time
 try:
     import gi
 except ModuleNotFoundError:
-    sys.path.append("/usr/lib/python3/dist-packages")
+    # Jetson system Python packages
+    for p in (
+        "/usr/lib/python3/dist-packages",
+        "/usr/lib64/python3.12/site-packages",
+        "/usr/lib64/python3.13/site-packages",
+        "/usr/lib/python3.12/site-packages",
+        "/usr/lib/python3.13/site-packages",
+    ):
+        if p not in sys.path:
+            sys.path.append(p)
     import gi
 
 gi.require_version("Gst", "1.0")
@@ -27,15 +38,23 @@ def _ensure_gst_init():
 
 
 class GstCam:
+    """
+    Direct GStreamer camera grabber for one Jetson CSI camera.
+
+    get_frame_rgb() -> RGB uint8 [H_out, W_out, 3]
+    """
+
     def __init__(
         self,
-        base_dir,
+        base_dir: str,
         frame_size=(128, 128),
-        jpeg_quality=90,
-        sensor_id=0,
-        capture_width=640,
-        capture_height=480,
-        capture_fps=30,
+        jpeg_quality: int = 90,
+        sensor_id: int = 0,
+        capture_width: int = 640,
+        capture_height: int = 480,
+        capture_fps: int = 30,
+        warmup_s: float = 0.3,
+        startup_timeout_s: float = 1.5,
     ):
         _ensure_gst_init()
 
@@ -83,16 +102,15 @@ class GstCam:
             self._shutdown_pipeline()
             return
 
-        time.sleep(0.3)
+        time.sleep(warmup_s)
 
-        # Prove startup by pulling one frame
-        sample = self.appsink.emit("try-pull-sample", int(1.5e9))
+        # prove startup with a real frame
+        sample = self.appsink.emit("try-pull-sample", int(startup_timeout_s * 1e9))
         if sample is None:
             print(f"[GstCam sensor {sensor_id}] ERROR: no startup frame")
             self._shutdown_pipeline()
             return
 
-        # We got a frame; keep camera alive
         self.alive = True
         print(f"[GstCam sensor {sensor_id}] READY")
 
@@ -106,7 +124,7 @@ class GstCam:
         self.appsink = None
         self.alive = False
 
-    def get_frame_rgb(self, timeout_s=1.0):
+    def get_frame_rgb(self, timeout_s: float = 1.0):
         if not self.alive or self.pipeline is None or self.appsink is None:
             raise RuntimeError(f"Camera {self.sensor_id} not alive")
 

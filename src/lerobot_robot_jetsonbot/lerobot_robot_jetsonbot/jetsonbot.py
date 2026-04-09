@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 import logging
-import os
 import time
 from functools import cached_property
 from itertools import chain
 from typing import Dict
 
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.processor import RobotAction, RobotObservation
@@ -14,7 +14,6 @@ from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from .config_jetsonbot import JetsonBotConfig
-from .gst_cam import GstCam
 from .shared.esp32_link import ESP32Link
 from .shared.imu_mpu import MPU6050Rates
 
@@ -57,12 +56,7 @@ class JetsonBot(Robot):
 
         time.sleep(1)
 
-        self.cameras = {}  # keep empty; we are not using LeRobot OpenCV cameras
-        self._gst_cams = {}
-        self.camera_keys = ["front", "wrist"]
-
-        self._camera_frame_size = (256, 144)  # (width, height)
-        self._camera_base_dir = "/tmp/jetsonbot_cam"
+        self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
     def _state_ft(self) -> dict[str, type]:
@@ -85,8 +79,8 @@ class JetsonBot(Robot):
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            "front": (self._camera_frame_size[1], self._camera_frame_size[0], 3),
-            "wrist": (self._camera_frame_size[1], self._camera_frame_size[0], 3),
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
+            for cam in self.cameras
         }
 
     @cached_property
@@ -99,8 +93,7 @@ class JetsonBot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        cams_ok = all(cam.alive for cam in self._gst_cams.values()) if self._gst_cams else True
-        return self.bus.is_connected and self.esp_link.is_connected() and cams_ok
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values()) and self.esp_link.is_connected()
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -115,34 +108,11 @@ class JetsonBot(Robot):
             )
             self.calibrate()
 
-        os.makedirs(self._camera_base_dir, exist_ok=True)
-
-        # Start the lighter camera first
-        self._gst_cams["front"] = GstCam(
-            base_dir=self._camera_base_dir,
-            frame_size=self._camera_frame_size,
-            sensor_id=0,
-            capture_width=1280,
-            capture_height=720,
-            capture_fps=30,
-        )
-
-        time.sleep(0.8)
-
-        # Start the second camera after a delay
-        self._gst_cams["wrist"] = GstCam(
-            base_dir=self._camera_base_dir,
-            frame_size=self._camera_frame_size,
-            sensor_id=1,
-            capture_width=1920,
-            capture_height=1080,
-            capture_fps=30,
-        )
-
-        if not self._gst_cams["front"].alive:
-            raise RuntimeError("Front camera failed to start")
-        if not self._gst_cams["wrist"].alive:
-            raise RuntimeError("Wrist camera failed to start")
+        # connect cameras with a small stagger to reduce Argus startup pressure
+        for i, cam in enumerate(self.cameras.values()):
+            cam.connect()
+            if i + 1 < len(self.cameras):
+                time.sleep(0.8)
 
         self.configure()
         logger.info("%s connected.", self)
@@ -214,22 +184,6 @@ class JetsonBot(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    @staticmethod
-    def _degps_to_raw(degps: float) -> int:
-        steps_per_deg = 4096.0 / 360.0
-        speed_in_steps = degps * steps_per_deg
-        speed_int = int(round(speed_in_steps))
-        if speed_int > 0x7FFF:
-            speed_int = 0x7FFF
-        elif speed_int < -0x8000:
-            speed_int = -0x8000
-        return speed_int
-
-    @staticmethod
-    def _raw_to_degps(raw_speed: int) -> float:
-        steps_per_deg = 4096.0 / 360.0
-        return raw_speed / steps_per_deg
-
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         start = time.perf_counter()
@@ -259,10 +213,9 @@ class JetsonBot(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug("%s read state: %.1fms", self, dt_ms)
 
-        for cam_key in self.camera_keys:
-            cam = self._gst_cams[cam_key]
+        for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.get_frame_rgb(timeout_s=1.0)
+            obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug("%s read %s: %.1fms", self, cam_key, dt_ms)
 
@@ -393,11 +346,10 @@ class JetsonBot(Robot):
         self.stop_base()
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
 
-        for cam_key, cam in self._gst_cams.items():
+        for cam_key, cam in self.cameras.items():
             try:
-                cam.release()
+                cam.disconnect()
             except Exception as e:
                 logger.warning("Failed to release camera %s cleanly: %s", cam_key, e)
 
-        self._gst_cams.clear()
         logger.info("%s disconnected.", self)
