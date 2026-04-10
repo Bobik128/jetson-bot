@@ -3,7 +3,6 @@ import base64
 import json
 import logging
 import time
-from .shared.frame_shm import FrameSpec, SharedFrameWriter
 from dataclasses import dataclass, field
 
 import cv2
@@ -48,19 +47,6 @@ def main(cfg: JetsonBotServerConfig):
 
     logging.info("Connecting JetsonBot")
     robot.connect()
-
-    frame_writers = {}
-    frame_counters = {}
-
-    for cam_key, cam_cfg in robot.config.cameras.items():
-        spec = FrameSpec(
-            name=f"jetsonbot_{cam_key}_rgb",
-            height=cam_cfg.height,
-            width=cam_cfg.width,
-            channels=3,
-        )
-        frame_writers[cam_key] = SharedFrameWriter(spec, create=True)
-        frame_counters[cam_key] = 0
 
     logging.info("Starting HostAgent")
     host = JetsonBotHost(cfg.host)
@@ -114,19 +100,16 @@ def main(cfg: JetsonBotServerConfig):
             for cam_key in robot.cameras:
                 img = last_observation.get(cam_key)
                 if img is None:
-                    last_observation.pop(cam_key, None)
+                    last_observation[cam_key] = ""
                     continue
 
                 try:
-                    frame_counters[cam_key] += 1
-                    ts_ns = time.time_ns()
-                    frame_writers[cam_key].write(img, frame_counters[cam_key], ts_ns)
-                    last_observation[f"{cam_key}__frame_id"] = frame_counters[cam_key]
-                    last_observation[f"{cam_key}__timestamp_ns"] = ts_ns
-                    last_observation.pop(cam_key, None)  # remove raw image from JSON
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    ret, buffer = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+                    last_observation[cam_key] = base64.b64encode(buffer).decode("utf-8") if ret else ""
                 except Exception:
-                    logging.exception("Failed to write shared-memory frame for key=%s", cam_key)
-                    last_observation[f"{cam_key}__frame_id"] = -1
+                    logging.exception("Failed to encode camera frame for key=%s", cam_key)
+                    last_observation[cam_key] = ""
 
             try:
                 host.zmq_observation_socket.send_string(json.dumps(last_observation), flags=zmq.NOBLOCK)
@@ -146,16 +129,6 @@ def main(cfg: JetsonBotServerConfig):
 
     finally:
         print("Shutting down JetsonBot Host.")
-        for writer in frame_writers.values():
-            try:
-                writer.close()
-            except Exception:
-                pass
-            try:
-                writer.unlink()
-            except Exception:
-                pass
-
         try:
             if getattr(robot, "is_connected", False):
                 robot.disconnect()

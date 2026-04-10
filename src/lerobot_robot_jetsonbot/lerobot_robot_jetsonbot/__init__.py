@@ -10,7 +10,6 @@
 # from .jetsonbot_client import JetsonBotClient
 
 from .config_jetsonbot_client import JetsonBotClientConfig
-# from .jetsonbot_client_notebook import JetsonBotClient
 from .jetsonbot_client import JetsonBotClient
 
 __all__ = [
