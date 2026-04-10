@@ -11,20 +11,20 @@ def jetsonbot_cameras_config():
             sensor_id=0,
             width=256,
             height=144,
-            capture_width=640,
-            capture_height=480,
-            fps=10,
+            capture_width=960,
+            capture_height=540,
+            fps=30,
             base_dir="/tmp/jetsonbot_cam",
         ),
-        # "wrist": JetsonGstCameraConfig(
-        #     sensor_id=1,
-        #     width=256,
-        #     height=144,
-        #     capture_width=640,
-        #     capture_height=480,
-        #     fps=30,
-        #     base_dir="/tmp/jetsonbot_cam",
-        # ),
+        "wrist": JetsonGstCameraConfig(
+            sensor_id=1,
+            width=256,
+            height=144,
+            capture_width=960,
+            capture_height=540,
+            fps=30,
+            base_dir="/tmp/jetsonbot_cam",
+        ),
     }
 
 

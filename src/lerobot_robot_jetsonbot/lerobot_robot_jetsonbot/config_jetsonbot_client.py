@@ -32,8 +32,8 @@ class JetsonBotClientConfig(RobotConfig):
     # client-side observation image keys only
     cameras: dict[str, ClientCameraSpec] = field(
         default_factory=lambda: {
-            "front": ClientCameraSpec(width=256, height=144, fps=10),
-            # "wrist": ClientCameraSpec(width=256, height=144, fps=30),
+            "front": ClientCameraSpec(width=256, height=144, fps=30),
+            "wrist": ClientCameraSpec(width=256, height=144, fps=30),
         }
     )
 
