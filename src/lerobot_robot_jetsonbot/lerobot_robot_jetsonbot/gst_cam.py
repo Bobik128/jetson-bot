@@ -68,8 +68,8 @@ class GstCam:
         self.appsink = None
 
         pipeline_str = (
-            f"nvarguscamerasrc sensor-id={sensor_id} ! "
-            f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, framerate={capture_fps}/1 ! "
+            f"nvarguscamerasrc sensor-id={sensor_id} sensor-mode=4 ! "
+            "video/x-raw(memory:NVMM), format=NV12, framerate=60/1 ! "
             "nvvidconv flip-method=0 ! "
             f"video/x-raw, width={self.out_w}, height={self.out_h}, format=BGRx ! "
             "videoconvert ! "
