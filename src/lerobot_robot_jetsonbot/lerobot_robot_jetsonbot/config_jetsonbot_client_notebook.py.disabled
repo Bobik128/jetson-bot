@@ -8,7 +8,6 @@ class ClientCameraSpec:
     width: int
     height: int
     fps: int
-    shm_name: str
 
 
 @RobotConfig.register_subclass("jetsonbot_client")
@@ -30,10 +29,11 @@ class JetsonBotClientConfig(RobotConfig):
         }
     )
 
+    # client-side observation image keys only
     cameras: dict[str, ClientCameraSpec] = field(
         default_factory=lambda: {
-            "front": ClientCameraSpec(width=256, height=144, fps=30, shm_name="jetsonbot_front_rgb"),
-            "wrist": ClientCameraSpec(width=256, height=144, fps=30, shm_name="jetsonbot_wrist_rgb"),
+            "front": ClientCameraSpec(width=256, height=144, fps=30),
+            "wrist": ClientCameraSpec(width=256, height=144, fps=30),
         }
     )
 

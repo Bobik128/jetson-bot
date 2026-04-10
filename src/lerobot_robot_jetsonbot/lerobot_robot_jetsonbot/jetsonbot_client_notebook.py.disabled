@@ -7,14 +7,13 @@ import cv2
 import numpy as np
 import pygame
 
-from .shared.frame_shm import FrameSpec, SharedFrameReader
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from lerobot.robots.robot import Robot
-from .config_jetsonbot_client import JetsonBotClientConfig
+from .config_jetsonbot_client_notebook import JetsonBotClientConfig
 
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -66,8 +65,6 @@ class JetsonBotClient(Robot):
         self.last_frames = {}
 
         self.last_remote_state = {}
-
-        self.frame_readers = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -203,15 +200,6 @@ class JetsonBotClient(Robot):
 
         self._is_connected = True
 
-        for cam_name, cfg in self.config.cameras.items():
-            spec = FrameSpec(
-                name=cfg.shm_name,
-                height=cfg.height,
-                width=cfg.width,
-                channels=3,
-            )
-            self.frame_readers[cam_name] = SharedFrameReader(spec)
-
     def calibrate(self) -> None:
         pass
 
@@ -287,17 +275,20 @@ class JetsonBotClient(Robot):
     def _remote_state_from_obs(
         self, observation: RobotObservation
     ) -> tuple[dict[str, np.ndarray], RobotObservation]:
+        """Extracts frames, and state from the parsed observation."""
+
         flat_state = {key: observation.get(key, 0.0) for key in self._obs_state_order}
         state_vec = np.array([flat_state[key] for key in self._obs_state_order], dtype=np.float32)
         obs_dict: RobotObservation = {**flat_state, OBS_STATE: state_vec}
 
+        # Decode images
         current_frames: dict[str, np.ndarray] = {}
-        for cam_name, reader in self.frame_readers.items():
-            try:
-                frame_id, timestamp_ns, frame = reader.read()
+        for cam_name, image_b64 in observation.items():
+            if cam_name not in self._cameras_ft:
+                continue
+            frame = self._decode_image_from_b64(image_b64)
+            if frame is not None:
                 current_frames[cam_name] = frame
-            except Exception as e:
-                logging.error("Failed reading shared-memory frame for %s: %s", cam_name, e)
 
         return current_frames, obs_dict
 
@@ -387,10 +378,4 @@ class JetsonBotClient(Robot):
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
-        for reader in self.frame_readers.values():
-            try:
-                reader.close()
-            except Exception:
-                pass
-        self.frame_readers.clear()
         self._is_connected = False
