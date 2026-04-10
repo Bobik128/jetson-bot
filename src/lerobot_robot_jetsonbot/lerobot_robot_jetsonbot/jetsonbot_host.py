@@ -12,7 +12,6 @@ import zmq
 from .config_jetsonbot import JetsonBotConfig, JetsonBotHostConfig
 from .jetsonbot import JetsonBot
 
-
 @dataclass
 class JetsonBotServerConfig:
     """Configuration for the JetsonBot host script."""
