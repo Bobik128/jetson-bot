@@ -38,4 +38,4 @@ class JetsonBotClientConfig(RobotConfig):
     )
 
     polling_timeout_ms: int = 15
-    connect_timeout_s: int = 30
+    connect_timeout_s: int = 120
