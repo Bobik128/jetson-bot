@@ -55,24 +55,24 @@ class JetsonBotHostConfig:
     max_loop_freq_hz: int = 30
 
 
-@RobotConfig.register_subclass("jetsonbot_client")
-@dataclass
-class JetsonBotClientConfig(RobotConfig):
-    remote_ip: str
-    port_zmq_cmd: int = 5555
-    port_zmq_observations: int = 5556
+# @RobotConfig.register_subclass("jetsonbot_client")
+# @dataclass
+# class JetsonBotClientConfig(RobotConfig):
+#     remote_ip: str
+#     port_zmq_cmd: int = 5555
+#     port_zmq_observations: int = 5556
 
-    teleop_keys: dict[str, str] = field(
-        default_factory=lambda: {
-            "forward": "w",
-            "backward": "s",
-            "left": "a",
-            "right": "d",
-            "speed_up": "r",
-            "speed_down": "f",
-            "quit": "q",
-        }
-    )
+#     teleop_keys: dict[str, str] = field(
+#         default_factory=lambda: {
+#             "forward": "w",
+#             "backward": "s",
+#             "left": "a",
+#             "right": "d",
+#             "speed_up": "r",
+#             "speed_down": "f",
+#             "quit": "q",
+#         }
+#     )
 
-    polling_timeout_ms: int = 15
-    connect_timeout_s: int = 30
+#     polling_timeout_ms: int = 15
+#     connect_timeout_s: int = 30

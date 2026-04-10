@@ -13,7 +13,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from lerobot.robots.robot import Robot
-from .config_jetsonbot import JetsonBotClientConfig
+from .config_jetsonbot_client import JetsonBotClientConfig
 
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -240,17 +240,34 @@ class JetsonBotClient(Robot):
             logging.error(f"Error decoding JSON observation: {e}")
             return None
 
+    # def _decode_image_from_b64(self, image_b64: str) -> np.ndarray | None:
+    #     """Decodes a base64 encoded image string to an OpenCV image."""
+    #     if not image_b64:
+    #         return None
+    #     try:
+    #         jpg_data = base64.b64decode(image_b64)
+    #         np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
+    #         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    #         if frame is None:
+    #             logging.warning("cv2.imdecode returned None for an image.")
+    #         return frame
+    #     except (TypeError, ValueError) as e:
+    #         logging.error(f"Error decoding base64 image data: {e}")
+    #         return None
+
     def _decode_image_from_b64(self, image_b64: str) -> np.ndarray | None:
-        """Decodes a base64 encoded image string to an OpenCV image."""
+        """Decodes a base64 encoded JPEG string to an RGB image."""
         if not image_b64:
             return None
         try:
             jpg_data = base64.b64decode(image_b64)
             np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is None:
+            frame_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame_bgr is None:
                 logging.warning("cv2.imdecode returned None for an image.")
-            return frame
+                return None
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            return frame_rgb
         except (TypeError, ValueError) as e:
             logging.error(f"Error decoding base64 image data: {e}")
             return None

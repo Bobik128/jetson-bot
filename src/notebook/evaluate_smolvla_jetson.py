@@ -3,6 +3,10 @@
 import re
 from huggingface_hub import HfApi
 
+from lerobot_robot_jetsonbot.jetsonbot_client import JetsonBotClient
+from lerobot_robot_jetsonbot.config_jetsonbot_client import JetsonBotClientConfig
+from lerobot_teleoperator_dualsense.dummy_leader_plus_dualsense import DummySOLeaderPlusDualsense
+from lerobot_teleoperator_dualsense.config_dummy_teleop_combo import DummySOLeaderPlusDualsenseConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.factory import make_pre_post_processors
@@ -10,7 +14,6 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 
-from lerobot_robot_jetsonbot import JetsonBotClient, JetsonBotClientConfig
 from lerobot_teleoperator_dualsense import (
     SOLeaderPlusDualsenseConfig,
     SOLeaderPlusDualsense,
@@ -90,23 +93,28 @@ def main():
         id="jetson-bot",
     )
 
-    teleop_config = SOLeaderPlusDualsenseConfig(
-        so=SO101LeaderConfig(
-            port="/dev/ttyACM0",
-            use_degrees=False,
-            id="the_leader",
-        ),
-        ds=DualsenseTeleopConfig(
-            joystick_index=0,
-            axis_forward=1,
-            axis_turn=0,
-            axis_turbo=2,
-        ),
-        allow_partial=False,
+    # teleop_config = SOLeaderPlusDualsenseConfig(
+    #     so=SO101LeaderConfig(
+    #         port="/dev/ttyACM0",
+    #         use_degrees=False,
+    #         id="the_leader",
+    #     ),
+    #     ds=DualsenseTeleopConfig(
+    #         joystick_index=0,
+    #         axis_forward=1,
+    #         axis_turn=0,
+    #         axis_turbo=2,
+    #     ),
+    #     allow_partial=False,
+    # )
+
+    teleop_config = DummySOLeaderPlusDualsenseConfig(
+        ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
     )
 
     robot = JetsonBotClient(robot_config)
-    teleop = SOLeaderPlusDualsense(teleop_config)
+    # teleop = SOLeaderPlusDualsense(teleop_config)
+    teleop = DummySOLeaderPlusDualsense(teleop_config)
     mapped_teleop = MappedTeleop(teleop)
 
     # -------------------------------------------------------------------------
