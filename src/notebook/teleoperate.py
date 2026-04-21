@@ -33,19 +33,19 @@ def main():
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
 
     robot_config = JetsonBotClientConfig(remote_ip="10.98.56.119", id="jetson-bot")
-    # teleop_config = SOLeaderPlusDualsenseConfig(
-    #     so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
-    #     ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
-    #     allow_partial=True,
-    # )
-    teleop_config = DummySOLeaderPlusDualsenseConfig(
+    teleop_config = SOLeaderPlusDualsenseConfig(
+        so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
+        allow_partial=True,
     )
+    # teleop_config = DummySOLeaderPlusDualsenseConfig(
+    #     ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
+    # )
 
     # Initialize the robot and teleoperator
     robot = JetsonBotClient(robot_config)
-    # teleop = SOLeaderPlusDualsense(teleop_config)
-    teleop = DummySOLeaderPlusDualsense(teleop_config)
+    teleop = SOLeaderPlusDualsense(teleop_config)
+    # teleop = DummySOLeaderPlusDualsense(teleop_config)
     mapped_teleop = MappedTeleop(teleop)
 
     # Connect to the robot and teleoperator
