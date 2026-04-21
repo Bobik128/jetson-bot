@@ -119,14 +119,14 @@ def main():
     #     allow_partial=False,
     # )
 
-    teleop_config = DummySOLeaderPlusDualsenseConfig(
-        ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
-    )
+    # teleop_config = DummySOLeaderPlusDualsenseConfig(
+    #     ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
+    # )
 
     robot = JetsonBotClient(robot_config)
     # teleop = SOLeaderPlusDualsense(teleop_config)
-    teleop = DummySOLeaderPlusDualsense(teleop_config)
-    mapped_teleop = MappedTeleop(teleop)
+    # teleop = DummySOLeaderPlusDualsense(teleop_config)
+    # mapped_teleop = MappedTeleop(teleop)
 
     # -------------------------------------------------------------------------
     # Policy
@@ -176,7 +176,7 @@ def main():
     # Connect robot + teleop
     # -------------------------------------------------------------------------
     robot.connect()
-    mapped_teleop.connect()
+    # mapped_teleop.connect()
 
     # -------------------------------------------------------------------------
     # DualSense episode controls
@@ -206,7 +206,7 @@ def main():
     init_rerun(session_name="jetsonbot_evaluate")
 
     try:
-        if not robot.is_connected or not mapped_teleop.is_connected:
+        if not robot.is_connected:# or not mapped_teleop.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
         print("Starting evaluate loop...")
@@ -228,7 +228,7 @@ def main():
                 policy=policy,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
-                teleop=mapped_teleop, # Teleop
+                #teleop=mapped_teleop, # Teleop
                 dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
@@ -253,7 +253,7 @@ def main():
                     robot=robot,
                     events=events,
                     fps=FPS,
-                    teleop=mapped_teleop,
+                    #teleop=mapped_teleop,
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
@@ -275,7 +275,7 @@ def main():
     finally:
         log_say("Stop evaluation")
         robot.disconnect()
-        mapped_teleop.disconnect()
+        #mapped_teleop.disconnect()
 
         if listener is not None:
             listener.stop()
