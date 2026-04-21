@@ -11,8 +11,8 @@ class JetsonGstCameraConfig(CameraConfig):
     sensor_id: int = 0
     base_dir: str = "/tmp/jetsonbot_cam"
 
-    capture_width: int = 1280
-    capture_height: int = 720
+    capture_width: int = 640
+    capture_height: int = 480
 
     # This is what Argus/GStreamer is asked for. Argus may still choose the closest supported mode.
     fps: int = 30
