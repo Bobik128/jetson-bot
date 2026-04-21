@@ -120,7 +120,8 @@ def main():
     # -------------------------------------------------------------------------
     # Policy: SmolVLA
     # -------------------------------------------------------------------------
-    policy = SmolVLAPolicy.from_pretrained(HF_MODEL_ID)
+    policy = SmolVLAPolicy.from_pretrained(HF_MODEL_ID, device="cpu")
+    policy.to("cuda")
 
     # -------------------------------------------------------------------------
     # Processors
