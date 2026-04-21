@@ -197,7 +197,12 @@ def main():
     #     debounce_sec=0.20,
     #     pause_key="paused",
     # )
-    events = {}
+    events = {
+        "stop_recording": False,
+        "exit_early": False,
+        "rerecord_episode": False,
+        "paused": False,
+    }
 
     # controller_listener = DualsenseEpisodeListener(ds_js, events, btns)
     # controller_listener.start()
