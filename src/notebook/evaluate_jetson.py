@@ -181,27 +181,27 @@ def main():
     # -------------------------------------------------------------------------
     # DualSense episode controls
     # -------------------------------------------------------------------------
-    ds_js = teleop.ds.joystick
-    if ds_js is None:
-        raise RuntimeError(
-            "Could not access DualSense joystick instance (ds_js is None). "
-            "Expose it from your teleop wrapper."
-        )
+    # ds_js = teleop.ds.joystick
+    # if ds_js is None:
+    #     raise RuntimeError(
+    #         "Could not access DualSense joystick instance (ds_js is None). "
+    #         "Expose it from your teleop wrapper."
+    #     )
 
-    btns = DualsenseEpisodeButtons(
-        btn_pause_toggle=9,      # Options
-        btn_exit_early=1,        # Circle
-        btn_rerecord_episode=2,  # Triangle
-        btn_stop_recording=8,    # Create
-        poll_hz=60.0,
-        debounce_sec=0.20,
-        pause_key="paused",
-    )
+    # btns = DualsenseEpisodeButtons(
+    #     btn_pause_toggle=9,      # Options
+    #     btn_exit_early=1,        # Circle
+    #     btn_rerecord_episode=2,  # Triangle
+    #     btn_stop_recording=8,    # Create
+    #     poll_hz=60.0,
+    #     debounce_sec=0.20,
+    #     pause_key="paused",
+    # )
     events = {}
 
-    controller_listener = DualsenseEpisodeListener(ds_js, events, btns)
-    controller_listener.start()
-    listener = controller_listener
+    # controller_listener = DualsenseEpisodeListener(ds_js, events, btns)
+    # controller_listener.start()
+    # listener = controller_listener
 
     init_rerun(session_name="jetsonbot_evaluate")
 
@@ -277,8 +277,8 @@ def main():
         robot.disconnect()
         #mapped_teleop.disconnect()
 
-        if listener is not None:
-            listener.stop()
+        # if listener is not None:
+        #     listener.stop()
 
         dataset.finalize()
         dataset.push_to_hub()
