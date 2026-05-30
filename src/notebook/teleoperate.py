@@ -32,7 +32,7 @@ def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
 
-    robot_config = JetsonBotClientConfig(remote_ip="10.58.247.119", id="jetson-bot")
+    robot_config = JetsonBotClientConfig(remote_ip="10.102.180.119", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
         so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
