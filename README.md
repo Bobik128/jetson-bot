@@ -1,99 +1,327 @@
-Software setup
+# JetsonBot Software Setup
 
-First, you'll need pc with Linux, since you're not going to have hdmi cable connected to jetson all the time and want it wireless
-Then you'll need teh Jetson Orin Nano and ubuntu with jetpack 6.2 installed on it, how to do that is written on nvidia official docs here https://www.jetson-ai-lab.com/tutorials/initial-setup-jetson-orin-nano/
+This guide explains how to set up the JetsonBot software environment, configure the Jetson Orin Nano, install LeRobot, install the JetsonBot libraries, calibrate the robot arm, and run teleoperation, recording, and policy evaluation.
 
-when you have jetson set up, connect the csi cameras imx477 and imx219 to the csi ports.
-then run this script on it and configure there the csi 24pin port to your cameras
+---
+
+## 1. Requirements
+
+You will need:
+
+- A PC running Linux
+- NVIDIA Jetson Orin Nano
+- Ubuntu with JetPack 6.2 installed on the Jetson
+- CSI cameras, for example:
+  - IMX477
+  - IMX219
+- SO101 Leader arm connected to the client PC
+- JetsonBot follower arm connected to the Jetson
+- Gamepad connected to the client PC
+- Both devices connected to the same local network or VPN
+
+Since the Jetson will usually run without an HDMI cable, the setup assumes that it will be accessed remotely from your Linux PC.
+
+---
+
+## 2. Jetson Initial Setup
+
+Install Ubuntu with JetPack 6.2 on the Jetson Orin Nano.
+
+Follow the official NVIDIA setup guide:
+
+```text
+https://www.jetson-ai-lab.com/tutorials/initial-setup-jetson-orin-nano/
+```
+
+After the Jetson is set up, connect the CSI cameras to the CSI ports.
+
+Then run the Jetson IO configuration tool:
+
+```bash
 sudo python /opt/nvidia/jetson-io/jetson-io.py
+```
 
-follow this tutorial for it if needed https://www.youtube.com/watch?v=gJPIJ3yxME0
+Configure the 24-pin CSI ports according to the cameras you are using.
 
-when you have that done, you can install lerobot following their guide: https://huggingface.co/docs/lerobot/installation
-also enable neede extra features like this:
+If needed, you can follow this video tutorial:
+
+```text
+https://www.youtube.com/watch?v=gJPIJ3yxME0
+```
+
+---
+
+## 3. Install LeRobot
+
+Install LeRobot by following the official guide:
+
+```text
+https://huggingface.co/docs/lerobot/installation
+```
+
+After installing LeRobot, enable the required extra features:
+
+```bash
 cd lerobot
+
 pip install 'lerobot[feetech]'
 pip install 'lerobot[lekiwi]'
+```
 
+---
 
-once that is done, you can install this library like this
+## 4. Install JetsonBot Libraries
+
+The following steps must be done on both the Jetson and the client PC.
+
+Activate the LeRobot environment:
+
+```bash
 conda activate lerobot
-git clone https://github.com/Bobik128/jetson-bot.git
+```
 
+Clone the JetsonBot repository:
+
+```bash
+git clone https://github.com/Bobik128/jetson-bot.git
+```
+
+Install the JetsonBot robot package:
+
+```bash
 cd jetson-bot/src/lerobot_robot_jetsonbot
+
 pip install -e .
 pip install lerobot_robot_jetsonbot
+```
 
-cd jetson-bot/src/lerobot_teleoperator_dualsense
+Install the DualSense teleoperator package:
+
+```bash
+cd ../lerobot_teleoperator_dualsense
+
 pip install -e .
 pip install lerobot_teleoperator_dualsense
+```
 
-Do this on both jetson and the other pc
+---
 
-Now on the other pc, I assume, that you already have a teleoperator hand like SO101 ready, setup and remember its id (name)
+## 5. Apply LeRobot Patches on the Jetson
 
-Now on jetson, you also need to do apply patches to the lerobot lib to include jetsonbot
+On the Jetson, patches need to be applied to the LeRobot library so that JetsonBot is available as a robot type.
+
+Go to the LeRobot repository:
+
+```bash
 cd ../lerobot
+```
+
+Check the patches first:
+
+```bash
 git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
+```
 
-Now connect the arm on robot (the saerial bus driver board) to some usb port on the jetson (to not take up much space, it will stay there)
+Apply the patches:
 
-Run the following script to find the port and disconnect the MotorBus when prompted:
+```bash
+git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
+git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
+```
+
+---
+
+## 6. Connect the Robot Arm to the Jetson
+
+Connect the robot arm serial bus driver board to a USB port on the Jetson.
+
+Then find the correct USB port:
+
+```bash
 lerobot-find-port
+```
 
-On Linux, you might need to give access to the USB ports by running:
-
-sudo chmod 666 /dev/ttyACM0
-sudo chmod 666 /dev/ttyACM1
+When prompted, disconnect the MotorBus USB cable and press Enter.
 
 Example output:
 
+```text
 Finding all available ports for the MotorBus.
 ['/dev/ttyACM0', '/dev/ttyACM1']
-Remove the usb cable from your MotorsBus and press Enter when done.
 
-[...Disconnect corresponding leader or follower arm and press Enter...]
+Remove the USB cable from your MotorBus and press Enter when done.
 
-The port of this MotorsBus is /dev/ttyACM1
+[...Disconnect the corresponding leader or follower arm and press Enter...]
+
+The port of this MotorBus is /dev/ttyACM1
+
 Reconnect the USB cable.
+```
 
-Where the found port is: /dev/ttyACM1 corresponding to your arm.
+In this example, the correct port is:
 
-to setup the motors and set their ids, run 
+```text
+/dev/ttyACM1
+```
+
+On Linux, you may need to give access to the USB ports:
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+---
+
+## 7. Set Up Motor IDs
+
+Run the motor setup command:
+
+```bash
 lerobot-setup-motors \
     --robot.type=jetsonbot \
-    --robot.port=/dev/tty.usbmodem585A0076841  # <- paste here the port found at previous step
+    --robot.port=/dev/ttyACM1
+```
 
-follow the programs instructions
+Replace `/dev/ttyACM1` with the port found in the previous step.
 
-them to set the motor limits, run
+Follow the instructions printed by the program.
+
+---
+
+## 8. Calibrate Motor Limits
+
+After setting up the motor IDs, calibrate the robot:
+
+```bash
 lerobot-calibrate \
     --robot.type=jetsonbot \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
+    --robot.port=/dev/ttyACM1 \
     --robot.id=jetson-bot
+```
 
-this process is technically the same as for SO101 follower arm
+Replace `/dev/ttyACM1` with the correct port for your robot.
 
-Congratulations! now you have completely set up the base software
+This process is technically the same as calibrating an SO101 follower arm.
 
-now to test it, connect your SO101 Leader arm to the client pc, and connect also a gamepad to it.
-now on jetson run
+After this step, the base software setup is complete.
+
+---
+
+## 9. Test Teleoperation
+
+To test the setup, connect the SO101 Leader arm and a gamepad to the client PC.
+
+On the Jetson, run the host script:
+
+```bash
 bash jetson-bot/runners/run_jetson_host.sh
-on pc modify the jetson-bot/src/scripts/teleoperate.py
-set the remote_ip to the [10.102.180.119] ip of jetson (they have to be on the same local network or connected trough VPN)
-set the leader arm [the_leader] id to your id
+```
 
-then on pc run 
+On the client PC, edit:
+
+```text
+jetson-bot/src/scripts/teleoperate.py
+```
+
+Set the Jetson IP address:
+
+```python
+remote_ip = "10.102.180.119"
+```
+
+Replace the example IP address with the actual IP address of your Jetson.
+
+Also set the SO101 Leader arm ID:
+
+```python
+leader_id = "the_leader"
+```
+
+Replace `the_leader` with your actual leader arm ID.
+
+Then run teleoperation from the client PC:
+
+```bash
 python3 jetson-bot/src/scripts/teleoperate.py
+```
 
-a screen with camera feeds and joint feedback should pop up
-the robot should react to the leader arm and gamepad
+A window with camera feeds and joint feedback should appear.
 
-the record.py script works the same way, but you have to be logged in into lerobot account and some buttons on gamepad are bind to stopping recording, rerecording, exiting early and so, it can be configured within the record.py file
-with it, you can record datasets and they get automatically uploaded to the lerobot hub
+The robot should now react to the SO101 Leader arm and the gamepad.
 
-to tran a policy, you have to use the lerobot_train script, how to use it is on their web
-you can train for this robot only act policy, any other is too heavy for the jetson and wont run
+---
 
-then in jetson-bot/runners folder, there are runners for the policy evaluation, you also have to change the ip there, and tha model link and dataset name
+## 10. Recording Datasets
+
+The `record.py` script works similarly to `teleoperate.py`.
+
+Before recording, make sure you are logged in to your Hugging Face account.
+
+The gamepad buttons are bound to actions such as:
+
+- Stop recording
+- Re-record an episode
+- Exit early
+- Control the recording flow
+
+These bindings can be configured inside the `record.py` file.
+
+Recorded datasets are automatically uploaded to the LeRobot Hub.
+
+---
+
+## 11. Training a Policy
+
+To train a policy, use the `lerobot-train` script.
+
+Follow the official LeRobot training documentation:
+
+```text
+https://huggingface.co/docs/lerobot/
+```
+
+For this robot, it is recommended to train only the ACT policy.
+
+Other policies are generally too heavy for the Jetson and may not run properly during evaluation.
+
+---
+
+## 12. Policy Evaluation
+
+Evaluation runners are located in:
+
+```text
+jetson-bot/runners
+```
+
+Before running evaluation, update the runner scripts with:
+
+- Jetson IP address
+- Hugging Face model link
+- Evaluation dataset name
+- Other required evaluation settings
+
+Then run the appropriate evaluation runner from the `runners` folder.
+
+---
+
+## Notes
+
+- The Jetson and client PC must be on the same local network or connected through a VPN.
+- Always check that the correct USB port is used before running setup, calibration, or teleoperation.
+- If USB permission errors occur, run:
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+- The camera configuration must match the cameras connected to the CSI ports.
+- If teleoperation starts but the robot does not move, check:
+  - The Jetson host script is running
+  - The correct remote IP is set
+  - The correct leader arm ID is set
+  - The robot arm is connected to the Jetson
+  - The gamepad is connected to the client PC
