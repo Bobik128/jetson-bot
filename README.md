@@ -1,3 +1,5 @@
+![Main Image](main_image.jpg)
+
 # JetsonBot Software Setup
 
 This guide explains how to set up the JetsonBot software environment, configure the Jetson Orin Nano, install LeRobot, install the JetsonBot libraries, calibrate the robot arm, and run teleoperation, recording, and policy evaluation.
