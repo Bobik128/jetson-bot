@@ -60,3 +60,22 @@ Reconnect the USB cable.
 
 Where the found port is: /dev/ttyACM1 corresponding to your arm.
 
+to setup the motors and set their ids, run 
+lerobot-setup-motors \
+    --robot.type=jetsonbot \
+    --robot.port=/dev/tty.usbmodem585A0076841  # <- paste here the port found at previous step
+
+follow the programs instructions
+
+them to set the motor limits, run
+lerobot-calibrate \
+    --robot.type=jetsonbot \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
+    --robot.id=jetson-bot
+
+this process is technically the same as for SO101 follower arm
+
+Congratulations! now you have completely set up the base software
+
+now to test it, connect your SO101 Leader arm to the client pc, and connect also a gamepad to it
+
