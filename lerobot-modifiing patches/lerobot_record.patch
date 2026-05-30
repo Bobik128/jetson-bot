@@ -1,0 +1,52 @@
+diff --git a/src/lerobot/scripts/lerobot_record.py b/src/lerobot/scripts/lerobot_record.py
+index 0b39e6ff..177e0404 100644
+--- a/src/lerobot/scripts/lerobot_record.py
++++ b/src/lerobot/scripts/lerobot_record.py
+@@ -283,6 +283,7 @@ def record_loop(
+     single_task: str | None = None,
+     display_data: bool = False,
+     display_compressed_images: bool = False,
++    vals_to_add_while_policy: list | None = None,
+ ):
+     if dataset is not None and dataset.fps != fps:
+         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+@@ -307,7 +308,7 @@ def record_loop(
+             None,
+         )
+ 
+-        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
++        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and (robot.name == "lekiwi_client" or robot.name == "jetson-bot")):
+             raise ValueError(
+                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
+             )
+@@ -329,7 +330,8 @@ def record_loop(
+ 
+         # Get robot observation
+         obs = robot.get_observation()
+-
++        # if events["stop_recording"] or events["exit_early"] or events["rerecord_episode"]:
++        #     break
+         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
+         obs_processed = robot_observation_processor(obs)
+ 
+@@ -351,8 +353,20 @@ def record_loop(
+ 
+             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+ 
++            # ------------------------------------------------------------------
++            # Add teleop correction on top of policy output for selected keys
++            # ------------------------------------------------------------------
++            if teleop is not None and vals_to_add_while_policy:
++                teleop_raw = teleop.get_action()
++                teleop_processed = teleop_action_processor((teleop_raw, obs))
++
++                for key in vals_to_add_while_policy:
++                    if key in teleop_processed and key in act_processed_policy:
++                        act_processed_policy[key] += teleop_processed[key]
+         elif policy is None and isinstance(teleop, Teleoperator):
+             act = teleop.get_action()
++            # if events["stop_recording"] or events["exit_early"] or events["rerecord_episode"]:
++            #     break
+ 
+             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
+             act_processed_teleop = teleop_action_processor((act, obs))

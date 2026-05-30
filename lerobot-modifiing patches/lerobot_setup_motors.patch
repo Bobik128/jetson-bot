@@ -1,0 +1,21 @@
+diff --git a/src/lerobot/scripts/lerobot_setup_motors.py b/src/lerobot/scripts/lerobot_setup_motors.py
+index 01af95b6..8a1e0bb9 100644
+--- a/src/lerobot/scripts/lerobot_setup_motors.py
++++ b/src/lerobot/scripts/lerobot_setup_motors.py
+@@ -46,6 +46,8 @@ from lerobot.teleoperators import (  # noqa: F401
+     so_leader,
+ )
+ 
++from lerobot_robot_jetsonbot.lerobot_robot_jetsonbot import jetsonbot
++
+ COMPATIBLE_DEVICES = [
+     "koch_follower",
+     "koch_leader",
+@@ -56,6 +58,7 @@ COMPATIBLE_DEVICES = [
+     "so101_follower",
+     "so101_leader",
+     "lekiwi",
++    "jetsonbot",
+ ]
+ 
+ 

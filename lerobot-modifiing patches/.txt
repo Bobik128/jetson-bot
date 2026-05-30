@@ -1,0 +1,2 @@
+git apply --3way lerobot_record.patch
+git apply --3way lerobot_setup_motors.patch
