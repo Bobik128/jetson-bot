@@ -77,5 +77,23 @@ this process is technically the same as for SO101 follower arm
 
 Congratulations! now you have completely set up the base software
 
-now to test it, connect your SO101 Leader arm to the client pc, and connect also a gamepad to it
+now to test it, connect your SO101 Leader arm to the client pc, and connect also a gamepad to it.
+now on jetson run
+bash jetson-bot/runners/run_jetson_host.sh
+on pc modify the jetson-bot/src/scripts/teleoperate.py
+set the remote_ip to the [10.102.180.119] ip of jetson (they have to be on the same local network or connected trough VPN)
+set the leader arm [the_leader] id to your id
 
+then on pc run 
+python3 jetson-bot/src/scripts/teleoperate.py
+
+a screen with camera feeds and joint feedback should pop up
+the robot should react to the leader arm and gamepad
+
+the record.py script works the same way, but you have to be logged in into lerobot account and some buttons on gamepad are bind to stopping recording, rerecording, exiting early and so, it can be configured within the record.py file
+with it, you can record datasets and they get automatically uploaded to the lerobot hub
+
+to tran a policy, you have to use the lerobot_train script, how to use it is on their web
+you can train for this robot only act policy, any other is too heavy for the jetson and wont run
+
+then in jetson-bot/runners folder, there are runners for the policy evaluation, you also have to change the ip there, and tha model link and dataset name
