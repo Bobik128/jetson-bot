@@ -19,6 +19,8 @@ https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17
 - MPU6050
 - 4 [Feetech ST3215](https://www.seeedstudio.com/Feetech-ST-3215-C044-Heavy-Duty-Servo-7-4V-1-191-Gear-Reduction-p-6460.html?srsltid=AfmBOoqBVjSrcsUERWT7MoxU_r9qsv71-_3SjrbNKbMuXd1zaGxcTlCi) servos of your choosing (you'll need step-down for the 7.4v version)
 - acrylic case for the jetson
+- 2 AS5600 magnetic encoders with magnets
+- [serial convertor](https://www.seeedstudio.com/Bus-Servo-Driver-Board-for-XIAO-p-6413.html) for the STS servos 
 - a hell lot of screws and nuts M2 and M3
 - 3 Li-Ion 18650 batteries
 - 2 [simple foc mini](https://docs.simplefoc.com/simplefocmini) drivers
