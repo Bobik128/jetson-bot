@@ -10,6 +10,17 @@ This guide explains how to set up the JetsonBot software environment, configure 
 
 You will need:
 
+- printed parts from [onshape document](https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17d6366/e/4006b5648b1eac5f03fa06ec?renderMode=0&uiState=6a1c07ff284022db124a85fb)
+- [waveshare 3s ups module](https://www.waveshare.com/wiki/UPS_Module_3S)
+- esp32 30pin version
+- MPU6050
+- 4 [Feetech ST3215](https://www.seeedstudio.com/Feetech-ST-3215-C044-Heavy-Duty-Servo-7-4V-1-191-Gear-Reduction-p-6460.html?srsltid=AfmBOoqBVjSrcsUERWT7MoxU_r9qsv71-_3SjrbNKbMuXd1zaGxcTlCi) servos of your choosing (you'll need step-down for the 7.4v version)
+- acrylic case for the jetson
+- a hell lot of screws and nuts M2 and M3
+- 3 Li-Ion 18650 batteries
+- 2 [simple foc mini](https://docs.simplefoc.com/simplefocmini) drivers
+- 2 balls with 20mm diameter for the omniwheels
+
 - A PC running Linux
 - NVIDIA Jetson Orin Nano
 - Ubuntu with JetPack 6.2 installed on the Jetson
