@@ -20,7 +20,7 @@ You will need:
 - 3 Li-Ion 18650 batteries
 - 2 [simple foc mini](https://docs.simplefoc.com/simplefocmini) drivers
 - 2 balls with 20mm diameter for the omniwheels
-
+- 2 [GM4108 motors](https://shop.iflight.com/ipower-motor-gm4108h-120t-brushless-gimbal-motor-pro217)
 - A PC running Linux
 - NVIDIA Jetson Orin Nano
 - Ubuntu with JetPack 6.2 installed on the Jetson
