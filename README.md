@@ -10,7 +10,10 @@ This guide explains how to set up the JetsonBot software environment, configure 
 
 You will need:
 
-- printed parts from [onshape document](https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17d6366/e/4006b5648b1eac5f03fa06ec?renderMode=0&uiState=6a1c07ff284022db124a85fb)
+- printed parts from onshape document
+```text
+https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17d6366/e/4006b5648b1eac5f03fa06ec?renderMode=0&uiState=6a1c07ff284022db124a85fb
+```
 - [waveshare 3s ups module](https://www.waveshare.com/wiki/UPS_Module_3S)
 - esp32 30pin version
 - MPU6050
