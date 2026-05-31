@@ -6,7 +6,7 @@ This guide explains how to set up the JetsonBot software environment, configure 
 
 ---
 
-## 1. Requirements
+## Requirements
 
 You will need:
 
@@ -38,6 +38,69 @@ https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17
 - Both devices connected to the same local network or VPN
 
 Since the Jetson will usually run without an HDMI cable, the setup assumes that it will be accessed remotely from your Linux PC.
+
+---
+
+## 1. Build
+
+Print and bou all the mentioned parts above.
+
+Putting it together is fairly simple, you can follow the assembly in the onshape document mentioned above.
+
+Don't forget to print adapters to the motor hollow shaft for your magnet size and put encoders in their slot
+
+### Wiring
+
+so you have qiute a lot of devices, you have to wire.
+
+- ESP32
+- 2x AS5600
+- 2x Simple foc mini
+- MPU6050
+- Jetson
+- UPS
+
+First connect both AS5600
+GND - GND on UPS
+VCC - 3.3V on UPS
+
+Left AS5600
+SDA - ESP GPIO 21
+SCL - ESP GPIO 22
+
+right AS5600
+SDA - ESP GPIO 19
+SCL - ESP GPIO 23
+
+Now connect the Simple FOC minis
+VCC - UPS 12.6V out
+GND - UPS GND
+GND - ESP GND
+M1, M2, M3 - Motor phases (switching any pair reverses the direction)
+
+Left Simple FOC
+In1 - ESP GPIO 13
+In2 - ESP GPIO 12
+In3 - ESP GPIO 14
+EN - ESP GPIO 5
+
+Right Simple FOC
+In1 - ESP GPIO 33
+In2 - ESP GPIO 25
+In3 - ESP GPIO 26
+EN - ESP GPIO 18
+
+Now connecting ESP to Jetson
+ESP GPIO 16 (RX) - Jetson pin 8 (TX)
+ESP GPIO 17 (TX) - Jetson pin 10 (RX)
+ESP GND - Jetson GND (pin 6)
+
+For connecting together UPS MPU and Jetson
+UPS 5V - MPU VCC
+UPS GND - MPU GND - Jetson GND
+UPS SCL - MPU SCL - Jetson pin 5 (SCL)
+UPS SDA - MPU SDA - Jetson pin 3 (SDA)
+UPS 12.6V - Jetson 12.6V in (the round connector in the front)
 
 ---
 
