@@ -2,109 +2,198 @@
 
 # JetsonBot Software Setup
 
-This guide explains how to set up the JetsonBot software environment, configure the Jetson Orin Nano, install LeRobot, install the JetsonBot libraries, calibrate the robot arm, and run teleoperation, recording, and policy evaluation.
+This README explains how to build and wire the JetsonBot hardware, configure the Jetson Orin Nano, install LeRobot, install the JetsonBot packages, calibrate the arm, and run teleoperation, dataset recording, training, and policy evaluation.
+
+The setup uses two computers:
+
+- **Jetson host**: the NVIDIA Jetson Orin Nano mounted on the robot.
+- **Client PC**: a Linux PC used for teleoperation, recording, training control, and remote access.
+
+The Jetson is expected to run mostly headless, without HDMI connected, so both devices should be connected to the same local network or VPN.
 
 ---
 
-## Requirements
+## Table of Contents
 
-You will need:
+1. [Hardware Requirements](#hardware-requirements)
+2. [Build the Robot](#build-the-robot)
+3. [Wiring](#wiring)
+4. [Jetson Initial Setup](#jetson-initial-setup)
+5. [Install LeRobot](#install-lerobot)
+6. [Install JetsonBot Packages](#install-jetsonbot-packages)
+7. [Apply LeRobot Patches](#apply-lerobot-patches)
+8. [Connect and Configure the Robot Arm](#connect-and-configure-the-robot-arm)
+9. [Calibrate Motor Limits](#calibrate-motor-limits)
+10. [Test Teleoperation](#test-teleoperation)
+11. [Record Datasets](#record-datasets)
+12. [Train a Policy](#train-a-policy)
+13. [Evaluate a Policy](#evaluate-a-policy)
+14. [Troubleshooting Notes](#troubleshooting-notes)
 
-- printed parts from onshape document
-```text
-https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17d6366/e/4006b5648b1eac5f03fa06ec?renderMode=0&uiState=6a1c07ff284022db124a85fb
-```
-- [waveshare 3s ups module](https://www.waveshare.com/wiki/UPS_Module_3S)
-- esp32 30pin version
-- MPU6050
-- 4 [Feetech ST3215](https://www.seeedstudio.com/Feetech-ST-3215-C044-Heavy-Duty-Servo-7-4V-1-191-Gear-Reduction-p-6460.html?srsltid=AfmBOoqBVjSrcsUERWT7MoxU_r9qsv71-_3SjrbNKbMuXd1zaGxcTlCi) servos of your choosing (you'll need step-down for the 7.4v version)
-- acrylic case for the jetson
-- 2 AS5600 magnetic encoders with magnets
-- [serial convertor](https://www.seeedstudio.com/Bus-Servo-Driver-Board-for-XIAO-p-6413.html) for the STS servos 
-- a hell lot of screws and nuts M2 and M3
-- 3 Li-Ion 18650 batteries
-- 2 [simple foc mini](https://docs.simplefoc.com/simplefocmini) drivers
-- 2 balls with 20mm diameter for the omniwheels
-- 2 [GM4108 motors](https://shop.iflight.com/ipower-motor-gm4108h-120t-brushless-gimbal-motor-pro217)
-- A PC running Linux
+---
+
+## Hardware Requirements
+
+### Printed and Mechanical Parts
+
+- Printed parts from the Onshape document:
+
+  ```text
+  https://cad.onshape.com/documents/1c027469138e22df9abe4045/w/c7a37744e0032bf1c17d6366/e/4006b5648b1eac5f03fa06ec?renderMode=0&uiState=6a1c07ff284022db124a85fb
+  ```
+
+- Acrylic case for the Jetson
+- M2 and M3 screws and nuts
+- Two 20 mm balls for the omniwheels
+- Magnet adapters for the motor hollow shafts, matched to your magnet size
+
+### Electronics
+
+- [Waveshare UPS Module 3S](https://www.waveshare.com/wiki/UPS_Module_3S)
+- ESP32, 30-pin version
+- MPU6050 IMU
+- 2× AS5600 magnetic encoders with magnets
+- 2× [SimpleFOC Mini](https://docs.simplefoc.com/simplefocmini) drivers
+- 2× [GM4108 motors](https://shop.iflight.com/ipower-motor-gm4108h-120t-brushless-gimbal-motor-pro217)
+- 3× Li-Ion 18650 batteries
+- 4× [Feetech ST3215](https://www.seeedstudio.com/Feetech-ST-3215-C044-Heavy-Duty-Servo-7-4V-1-191-Gear-Reduction-p-6460.html) servos
+  - If you use the 7.4 V version, use an appropriate step-down converter.
+- [Bus servo driver board / serial converter](https://www.seeedstudio.com/Bus-Servo-Driver-Board-for-XIAO-p-6413.html) for STS servos
+
+### Computing and Control
+
 - NVIDIA Jetson Orin Nano
 - Ubuntu with JetPack 6.2 installed on the Jetson
-- CSI cameras, for example:
-  - IMX477
-  - IMX219
+- Linux PC
 - SO101 Leader arm connected to the client PC
 - JetsonBot follower arm connected to the Jetson
 - Gamepad connected to the client PC
-- Both devices connected to the same local network or VPN
 
-Since the Jetson will usually run without an HDMI cable, the setup assumes that it will be accessed remotely from your Linux PC.
+### Cameras
+
+CSI cameras connected to the Jetson, for example:
+
+- IMX477
+- IMX219
 
 ---
 
-## 1. Build
+## Build the Robot
 
-Print and bou all the mentioned parts above.
+Print and buy all parts listed in the [Hardware Requirements](#hardware-requirements) section.
 
-Putting it together is fairly simple, you can follow the assembly in the onshape document mentioned above.
+Assembly is fairly simple. Follow the mechanical assembly shown in the Onshape document linked above.
 
-Don't forget to print adapters to the motor hollow shaft for your magnet size and put encoders in their slot
+Do not forget to:
 
-### Wiring
+- Print the hollow-shaft magnet adapters for your magnet size.
+- Place the AS5600 encoders into their slots.
+- Make sure the magnets are centered above the encoders.
+- Check that the omniwheel balls rotate freely.
+- Check that no wires can touch the rotating motors or wheels.
 
-so you have qiute a lot of devices, you have to wire.
+---
+
+## Wiring
+
+The robot contains several connected devices:
 
 - ESP32
-- 2x AS5600
-- 2x Simple foc mini
+- 2× AS5600 magnetic encoders
+- 2× SimpleFOC Mini drivers
 - MPU6050
-- Jetson
-- UPS
+- Jetson Orin Nano
+- Waveshare UPS module
 
-First connect both AS5600
-GND - GND on UPS
-VCC - 3.3V on UPS
-
-Left AS5600
-SDA - ESP GPIO 21
-SCL - ESP GPIO 22
-
-right AS5600
-SDA - ESP GPIO 19
-SCL - ESP GPIO 23
-
-Now connect the Simple FOC minis
-VCC - UPS 12.6V out
-GND - UPS GND
-GND - ESP GND
-M1, M2, M3 - Motor phases (switching any pair reverses the direction)
-
-Left Simple FOC
-In1 - ESP GPIO 13
-In2 - ESP GPIO 12
-In3 - ESP GPIO 14
-EN - ESP GPIO 5
-
-Right Simple FOC
-In1 - ESP GPIO 33
-In2 - ESP GPIO 25
-In3 - ESP GPIO 26
-EN - ESP GPIO 18
-
-Now connecting ESP to Jetson
-ESP GPIO 16 (RX) - Jetson pin 8 (TX)
-ESP GPIO 17 (TX) - Jetson pin 10 (RX)
-ESP GND - Jetson GND (pin 6)
-
-For connecting together UPS MPU and Jetson
-UPS 5V - MPU VCC
-UPS GND - MPU GND - Jetson GND
-UPS SCL - MPU SCL - Jetson pin 5 (SCL)
-UPS SDA - MPU SDA - Jetson pin 3 (SDA)
-UPS 12.6V - Jetson 12.6V in (the round connector in the front)
+Make sure all shared devices have a common ground.
 
 ---
 
-## 2. Jetson Initial Setup
+### AS5600 Encoders
+
+Connect both AS5600 encoders to power first:
+
+| AS5600 Pin | Connect To |
+|---|---|
+| GND | UPS GND |
+| VCC | UPS 3.3 V |
+
+Then connect each encoder to its own ESP32 I2C bus.
+
+#### Left AS5600
+
+| AS5600 Pin | ESP32 Pin |
+|---|---|
+| SDA | GPIO 21 |
+| SCL | GPIO 22 |
+
+#### Right AS5600
+
+| AS5600 Pin | ESP32 Pin |
+|---|---|
+| SDA | GPIO 19 |
+| SCL | GPIO 23 |
+
+---
+
+### SimpleFOC Mini Drivers
+
+Connect both SimpleFOC Mini drivers to power and to the motors.
+
+| SimpleFOC Mini Pin | Connect To |
+|---|---|
+| VCC | UPS 12.6 V output |
+| GND | UPS GND |
+| GND | ESP32 GND |
+| M1, M2, M3 | Motor phases |
+
+If a motor rotates in the wrong direction, swap any two motor phase wires.
+
+#### Left SimpleFOC Mini
+
+| SimpleFOC Mini Pin | ESP32 Pin |
+|---|---|
+| IN1 | GPIO 13 |
+| IN2 | GPIO 12 |
+| IN3 | GPIO 14 |
+| EN | GPIO 5 |
+
+#### Right SimpleFOC Mini
+
+| SimpleFOC Mini Pin | ESP32 Pin |
+|---|---|
+| IN1 | GPIO 33 |
+| IN2 | GPIO 25 |
+| IN3 | GPIO 26 |
+| EN | GPIO 18 |
+
+---
+
+### ESP32 to Jetson UART
+
+Connect the ESP32 to the Jetson UART.
+
+| ESP32 Pin | Jetson Pin |
+|---|---|
+| GPIO 16, RX | Pin 8, TX |
+| GPIO 17, TX | Pin 10, RX |
+| GND | Pin 6, GND |
+
+---
+
+### UPS, MPU6050, and Jetson Power/I2C
+
+| Device Pin | Connect To |
+|---|---|
+| UPS 5 V | MPU6050 VCC |
+| UPS GND | MPU6050 GND and Jetson GND |
+| UPS SCL | MPU6050 SCL and Jetson pin 5, SCL |
+| UPS SDA | MPU6050 SDA and Jetson pin 3, SDA |
+| UPS 12.6 V | Jetson 12.6 V input, front barrel connector |
+
+---
+
+## Jetson Initial Setup
 
 Install Ubuntu with JetPack 6.2 on the Jetson Orin Nano.
 
@@ -124,7 +213,7 @@ sudo python /opt/nvidia/jetson-io/jetson-io.py
 
 Configure the 24-pin CSI ports according to the cameras you are using.
 
-If needed, you can follow this video tutorial:
+If needed, follow this video tutorial:
 
 ```text
 https://www.youtube.com/watch?v=gJPIJ3yxME0
@@ -132,7 +221,7 @@ https://www.youtube.com/watch?v=gJPIJ3yxME0
 
 ---
 
-## 3. Install LeRobot
+## Install LeRobot
 
 Install LeRobot by following the official guide:
 
@@ -140,7 +229,7 @@ Install LeRobot by following the official guide:
 https://huggingface.co/docs/lerobot/installation
 ```
 
-After installing LeRobot, enable the required extra features:
+After LeRobot is installed, enable the required extras:
 
 ```bash
 cd lerobot
@@ -151,11 +240,14 @@ pip install 'lerobot[lekiwi]'
 
 ---
 
-## 4. Install JetsonBot Libraries
+## Install JetsonBot Packages
 
-The following steps must be done on both the Jetson and the client PC.
+Run these steps on both:
 
-Activate the LeRobot environment:
+- the Jetson host
+- the Linux client PC
+
+Activate the LeRobot Conda environment:
 
 ```bash
 conda activate lerobot
@@ -187,17 +279,19 @@ pip install lerobot_teleoperator_dualsense
 
 ---
 
-## 5. Apply LeRobot Patches on the Jetson
+## Apply LeRobot Patches
 
-On the Jetson, patches need to be applied to the LeRobot library so that JetsonBot is available as a robot type.
+This step is required on the Jetson.
 
-Go to the LeRobot repository:
+The patches add JetsonBot support to the LeRobot scripts.
+
+Go to your LeRobot repository:
 
 ```bash
-cd ../lerobot
+cd /path/to/lerobot
 ```
 
-Check the patches first:
+Check that the patches can be applied cleanly:
 
 ```bash
 git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
@@ -211,13 +305,15 @@ git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
 ```
 
+> Note: the folder name `lerobot-modifiing patches` is kept exactly as used in the repository path.
+
 ---
 
-## 6. Connect the Robot Arm to the Jetson
+## Connect and Configure the Robot Arm
 
 Connect the robot arm serial bus driver board to a USB port on the Jetson.
 
-Then find the correct USB port:
+Find the correct port:
 
 ```bash
 lerobot-find-port
@@ -246,18 +342,14 @@ In this example, the correct port is:
 /dev/ttyACM1
 ```
 
-On Linux, you may need to give access to the USB ports:
+On Linux, you may need to give temporary access to the USB ports:
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
 sudo chmod 666 /dev/ttyACM1
 ```
 
----
-
-## 7. Set Up Motor IDs
-
-Run the motor setup command:
+Now set up the motor IDs:
 
 ```bash
 lerobot-setup-motors \
@@ -271,9 +363,9 @@ Follow the instructions printed by the program.
 
 ---
 
-## 8. Calibrate Motor Limits
+## Calibrate Motor Limits
 
-After setting up the motor IDs, calibrate the robot:
+After the motor IDs are configured, calibrate the robot:
 
 ```bash
 lerobot-calibrate \
@@ -282,7 +374,7 @@ lerobot-calibrate \
     --robot.id=jetson-bot
 ```
 
-Replace `/dev/ttyACM1` with the correct port for your robot.
+Replace `/dev/ttyACM1` with the correct robot port.
 
 This process is technically the same as calibrating an SO101 follower arm.
 
@@ -290,11 +382,14 @@ After this step, the base software setup is complete.
 
 ---
 
-## 9. Test Teleoperation
+## Test Teleoperation
 
-To test the setup, connect the SO101 Leader arm and a gamepad to the client PC.
+Connect the following to the client PC:
 
-On the Jetson, run the host script:
+- SO101 Leader arm
+- Gamepad
+
+Run the Jetson host script on the Jetson:
 
 ```bash
 bash jetson-bot/runners/run_jetson_host.sh
@@ -314,7 +409,7 @@ remote_ip = "10.102.180.119"
 
 Replace the example IP address with the actual IP address of your Jetson.
 
-Also set the SO101 Leader arm ID:
+Set the SO101 Leader arm ID:
 
 ```python
 leader_id = "the_leader"
@@ -322,7 +417,7 @@ leader_id = "the_leader"
 
 Replace `the_leader` with your actual leader arm ID.
 
-Then run teleoperation from the client PC:
+Run teleoperation from the client PC:
 
 ```bash
 python3 jetson-bot/src/scripts/teleoperate.py
@@ -330,30 +425,30 @@ python3 jetson-bot/src/scripts/teleoperate.py
 
 A window with camera feeds and joint feedback should appear.
 
-The robot should now react to the SO101 Leader arm and the gamepad.
+The robot should react to the SO101 Leader arm and the gamepad.
 
 ---
 
-## 10. Recording Datasets
+## Record Datasets
 
 The `record.py` script works similarly to `teleoperate.py`.
 
 Before recording, make sure you are logged in to your Hugging Face account.
 
-The gamepad buttons are bound to actions such as:
+The gamepad buttons are bound to recording actions such as:
 
-- Stop recording
-- Re-record an episode
-- Exit early
-- Control the recording flow
+- stop recording
+- re-record the current episode
+- exit early
+- control the recording flow
 
-These bindings can be configured inside the `record.py` file.
+These bindings can be configured inside `record.py`.
 
 Recorded datasets are automatically uploaded to the LeRobot Hub.
 
 ---
 
-## 11. Training a Policy
+## Train a Policy
 
 To train a policy, use the `lerobot-train` script.
 
@@ -363,46 +458,88 @@ Follow the official LeRobot training documentation:
 https://huggingface.co/docs/lerobot/
 ```
 
-For this robot, it is recommended to train only the ACT policy.
+For this robot, the recommended policy is **ACT**.
 
-Other policies are generally too heavy for the Jetson and may not run properly during evaluation.
+Other policies are usually too heavy for the Jetson and may not run properly during evaluation.
 
 ---
 
-## 12. Policy Evaluation
+## Evaluate a Policy
 
-Evaluation runners are located in:
+Evaluation runner scripts are located in:
 
 ```text
 jetson-bot/runners
 ```
 
-Before running evaluation, update the runner scripts with:
+Before running evaluation, update the runner script with:
 
 - Jetson IP address
 - Hugging Face model link
-- Evaluation dataset name
-- Other required evaluation settings
+- evaluation dataset name
+- number of episodes
+- FPS
+- task description
+- robot ID
+- other required evaluation settings
 
 Then run the appropriate evaluation runner from the `runners` folder.
 
 ---
 
-## Notes
+## Troubleshooting Notes
 
-- The Jetson and client PC must be on the same local network or connected through a VPN.
-- Always check that the correct USB port is used before running setup, calibration, or teleoperation.
-- If USB permission errors occur, run:
+### USB Permission Errors
+
+If the robot or leader arm cannot access `/dev/ttyACM*`, run:
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
 sudo chmod 666 /dev/ttyACM1
 ```
 
-- The camera configuration must match the cameras connected to the CSI ports.
-- If teleoperation starts but the robot does not move, check:
-  - The Jetson host script is running
-  - The correct remote IP is set
-  - The correct leader arm ID is set
-  - The robot arm is connected to the Jetson
-  - The gamepad is connected to the client PC
+This is temporary and may need to be repeated after reconnecting the device or rebooting.
+
+---
+
+### Teleoperation Starts, but the Robot Does Not Move
+
+Check that:
+
+- the Jetson host script is running
+- the Jetson and client PC are on the same network or VPN
+- `remote_ip` is set to the Jetson IP address
+- `leader_id` matches the SO101 Leader arm ID
+- the robot arm is connected to the Jetson
+- the gamepad is connected to the client PC
+- the correct `/dev/ttyACM*` port is used
+
+---
+
+### Camera Feed Does Not Appear
+
+Check that:
+
+- the CSI cameras are connected correctly
+- Jetson IO was configured for the correct 24-pin CSI camera ports
+- the camera configuration matches the installed cameras
+- the Jetson was rebooted after changing Jetson IO settings
+
+---
+
+## Final Checklist
+
+Before running teleoperation or recording, verify that:
+
+- [ ] JetPack 6.2 is installed on the Jetson
+- [ ] CSI cameras are configured through Jetson IO
+- [ ] LeRobot is installed
+- [ ] `lerobot[feetech]` and `lerobot[lekiwi]` extras are installed
+- [ ] JetsonBot packages are installed on both machines
+- [ ] LeRobot patches are applied on the Jetson
+- [ ] Robot motor IDs are configured
+- [ ] Robot limits are calibrated
+- [ ] Jetson host script is running
+- [ ] Client PC has the correct Jetson IP address
+- [ ] SO101 Leader arm ID is configured correctly
+- [ ] Gamepad is connected
