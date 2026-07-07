@@ -37,9 +37,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import re
-from typing import Any, Optional
+import json
 import os
+import re
+import shutil
+from pathlib import Path
+from typing import Any, Optional
 
 from huggingface_hub import HfApi
 
@@ -190,6 +193,19 @@ def parse_args() -> argparse.Namespace:
         help="Load policy on CPU, then move to CUDA. Useful for SmolVLA on Jetson.",
     )
     parser.add_argument(
+        "--smolvla-cpu-load-dir",
+        default=None,
+        help=(
+            "Optional local directory used as a CPU-device copy of the SmolVLA model. "
+            "Only used with --policy smolvla --load-on-cpu-then-cuda."
+        ),
+    )
+    parser.add_argument(
+        "--keep-smolvla-on-cpu",
+        action="store_true",
+        help="With --load-on-cpu-then-cuda, load SmolVLA on CPU and do not move it to CUDA. Useful for testing.",
+    )
+    parser.add_argument(
         "--no-inference-mode",
         action="store_true",
         help="Disable torch.inference_mode() wrapper. By default it is used for no-teleop SmolVLA runs.",
@@ -257,6 +273,161 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+
+def _safe_model_cache_name(model_id_or_path: str) -> str:
+    """Create a stable filesystem-safe name for a model id or local path."""
+    text = str(model_id_or_path).strip().replace("~", "home")
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("_") or "model"
+
+
+def _force_device_cpu_json(obj: Any) -> tuple[Any, bool]:
+    """
+    Recursively replace config device values that point to CUDA with CPU.
+    Returns (possibly_modified_object, changed).
+    """
+    changed = False
+
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            key_lower = str(key).lower()
+
+            if key_lower == "device" and isinstance(value, str) and value.startswith("cuda"):
+                out[key] = "cpu"
+                changed = True
+                continue
+
+            if key_lower == "device_map" and isinstance(value, str) and value.startswith("cuda"):
+                out[key] = "cpu"
+                changed = True
+                continue
+
+            new_value, child_changed = _force_device_cpu_json(value)
+            out[key] = new_value
+            changed = changed or child_changed
+
+        return out, changed
+
+    if isinstance(obj, list):
+        out = []
+        for value in obj:
+            new_value, child_changed = _force_device_cpu_json(value)
+            out.append(new_value)
+            changed = changed or child_changed
+        return out, changed
+
+    return obj, False
+
+
+def patch_model_config_devices_to_cpu(model_dir: str | Path) -> list[str]:
+    """
+    Patch local model config files so LeRobot/safetensors load weights on CPU.
+
+    This is needed for some SmolVLA LeRobot versions where passing
+    from_pretrained(..., device="cpu") is not enough because the saved policy
+    config still contains device="cuda", and safetensors then tries to allocate
+    tensors on CUDA during checkpoint load.
+    """
+    root = Path(model_dir).expanduser().resolve()
+    patched: list[str] = []
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+
+        suffix = path.suffix.lower()
+
+        if suffix == ".json":
+            try:
+                obj = json.loads(path.read_text())
+            except Exception:
+                continue
+
+            new_obj, changed = _force_device_cpu_json(obj)
+            if changed:
+                path.write_text(json.dumps(new_obj, indent=2, ensure_ascii=False) + "\n")
+                patched.append(str(path))
+            continue
+
+        if suffix in {".yaml", ".yml", ".toml"}:
+            try:
+                old = path.read_text(errors="ignore")
+            except Exception:
+                continue
+
+            new = old
+            # Common YAML/TOML/text config forms.
+            new = re.sub(r'(?m)^(\s*device\s*[:=]\s*)["\']?cuda(?::\d+)?["\']?(\s*(?:#.*)?$)', r'\1cpu\2', new)
+            new = re.sub(r'(?m)^(\s*device_map\s*[:=]\s*)["\']?cuda(?::\d+)?["\']?(\s*(?:#.*)?$)', r'\1cpu\2', new)
+            new = new.replace('"device": "cuda"', '"device": "cpu"')
+            new = new.replace('"device":"cuda"', '"device":"cpu"')
+            new = new.replace("'device': 'cuda'", "'device': 'cpu'")
+            new = new.replace("device: cuda:0", "device: cpu")
+            new = new.replace("device: cuda", "device: cpu")
+
+            if new != old:
+                path.write_text(new)
+                patched.append(str(path))
+
+    return patched
+
+
+def prepare_smolvla_cpu_load_model_dir(model_id_or_path: str, requested_dir: Optional[str]) -> str:
+    """
+    Create/use a local copy of a SmolVLA model with config device patched to CPU.
+
+    For remote HF repo ids, this downloads a local copy via snapshot_download.
+    For local folders, this copies the folder into a separate cache dir before
+    patching, so the original model folder is not modified.
+    """
+    if requested_dir is not None:
+        dst = Path(requested_dir).expanduser().resolve()
+    else:
+        dst = (
+            Path.home()
+            / ".cache"
+            / "jetsonbot_eval"
+            / "smolvla_cpu_load_models"
+            / _safe_model_cache_name(model_id_or_path)
+        )
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    src_path = Path(model_id_or_path).expanduser()
+    if src_path.exists():
+        src_path = src_path.resolve()
+        if src_path != dst:
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src_path, dst)
+    else:
+        from huggingface_hub import snapshot_download
+
+        print(f"Downloading/caching SmolVLA model for CPU load into: {dst}")
+        snapshot_download(
+            repo_id=model_id_or_path,
+            local_dir=str(dst),
+            local_dir_use_symlinks=False,
+        )
+
+    patched = patch_model_config_devices_to_cpu(dst)
+    if patched:
+        print("Patched model config device to CPU in:")
+        for path in patched:
+            print("  ", path)
+    else:
+        print("No CUDA device entries found in local model config files; using local copy anyway:", dst)
+
+    return str(dst)
+
+
+def set_policy_config_device(policy: Any, device: str) -> None:
+    """Best-effort update of policy.config.device for processor/device setup."""
+    try:
+        policy.config.device = device
+    except Exception:
+        pass
+
 def resolve_policy_device(args: argparse.Namespace) -> str:
     """
     Pick the policy device explicitly instead of relying on LeRobot defaults.
@@ -288,31 +459,41 @@ def load_policy(args: argparse.Namespace) -> Any:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         if args.load_on_cpu_then_cuda:
-            print("Loading SmolVLA policy on CPU with CUDA temporarily hidden...")
+            # Do not try to hide CUDA inside this process. By this point LeRobot/torch
+            # may already be imported. Instead, load from a local model copy whose
+            # saved config is patched to device="cpu", so safetensors loads weights
+            # on CPU first.
+            cpu_model_dir = prepare_smolvla_cpu_load_model_dir(
+                args.hf_model_id,
+                requested_dir=args.smolvla_cpu_load_dir,
+            )
 
-            old_cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            print("Loading SmolVLA policy on CPU from:", cpu_model_dir)
+            policy = SmolVLAPolicy.from_pretrained(cpu_model_dir, device="cpu")
+            set_policy_config_device(policy, "cpu")
 
-            try:
-                policy = SmolVLAPolicy.from_pretrained(args.hf_model_id, device="cpu")
-            finally:
-                if old_cuda_visible_devices is None:
-                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-                else:
-                    os.environ["CUDA_VISIBLE_DEVICES"] = old_cuda_visible_devices
+            target_device = "cpu" if args.keep_smolvla_on_cpu else device
+            if target_device.startswith("cuda"):
+                try:
+                    import torch
 
-            try:
-                policy.config.device = "cpu"
-            except Exception:
-                pass
+                    print("CUDA before moving SmolVLA:", torch.cuda.is_available())
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    else:
+                        print("CUDA is not available; keeping SmolVLA on CPU.")
+                        target_device = "cpu"
+                except Exception as exc:
+                    print(f"CUDA check before moving SmolVLA failed: {exc}; keeping on CPU.")
+                    target_device = "cpu"
 
-            print("Moving SmolVLA policy to CUDA...")
-            policy.to("cuda")
-
-            try:
-                policy.config.device = "cuda"
-            except Exception:
-                pass
+            if target_device.startswith("cuda"):
+                print(f"Moving SmolVLA policy to {target_device}...")
+                policy.to(target_device)
+                set_policy_config_device(policy, target_device)
+            else:
+                print("Keeping SmolVLA policy on CPU.")
+                set_policy_config_device(policy, "cpu")
 
             policy.eval()
             return policy
