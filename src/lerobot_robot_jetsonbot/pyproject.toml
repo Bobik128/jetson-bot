@@ -18,6 +18,9 @@ classifiers = [
 dependencies = [
   "numpy",
   "lerobot>=0.4",
+  "pyserial",
+  "pygame",
+  "zmq",
 ]
 
 [tool.setuptools.packages.find]
