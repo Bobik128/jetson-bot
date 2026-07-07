@@ -37,9 +37,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import logging
 import re
-import time
 from typing import Any, Optional
 
 from huggingface_hub import HfApi
@@ -47,31 +45,13 @@ from huggingface_hub import HfApi
 from lerobot_robot_jetsonbot.jetsonbot_client import JetsonBotClient
 from lerobot_robot_jetsonbot.config_jetsonbot_client import JetsonBotClientConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-try:
-    # LeRobot >= 0.6
-    from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
-except ImportError:
-    # Older LeRobot fallback
-    from lerobot.datasets.utils import hw_to_dataset_features
-    from lerobot.utils.feature_utils import build_dataset_frame
-
-try:
-    # LeRobot >= 0.6 public import
-    from lerobot.policies import make_pre_post_processors
-except ImportError:
-    # Older LeRobot fallback
-    from lerobot.policies.factory import make_pre_post_processors
-
-from lerobot.policies.utils import build_inference_frame, make_robot_action
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import make_default_processors
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import (
-    init_visualization,
-    log_visualization_data,
-    shutdown_visualization,
-)
+from lerobot.utils.visualization_utils import init_rerun
 
 # Teleop imports are only used when --teleop is not "none".
 from lerobot_teleoperator_dualsense import (
@@ -303,25 +283,29 @@ def load_policy(args: argparse.Namespace) -> Any:
 
 
 def make_policy_processors(policy: Any, dataset: LeRobotDataset, args: argparse.Namespace):
-    """Create policy processors across the old/new LeRobot call signatures."""
-    policy_cfg = getattr(policy, "config", policy)
-    device = str(getattr(policy_cfg, "device", args.device or "cuda"))
-
-    kwargs = {
-        "dataset_stats": dataset.meta.stats,
-        "preprocessor_overrides": {
-            "device_processor": {"device": device},
-        },
-    }
-
-    try:
-        return make_pre_post_processors(policy_cfg, args.hf_model_id, **kwargs)
-    except TypeError:
+    """
+    ACT and SmolVLA use slightly different calling conventions in the uploaded scripts.
+    """
+    if args.policy == "act":
+        policy_cfg = policy
+        pretrained_path = args.hf_model_id
         return make_pre_post_processors(
             policy_cfg=policy_cfg,
-            pretrained_path=args.hf_model_id,
-            **kwargs,
+            pretrained_path=pretrained_path,
+            dataset_stats=dataset.meta.stats,
+            preprocessor_overrides={
+                "device_processor": {"device": str(policy.config.device)}
+            },
         )
+
+    return make_pre_post_processors(
+        policy.config,
+        args.hf_model_id,
+        dataset_stats=dataset.meta.stats,
+        preprocessor_overrides={
+            "device_processor": {"device": str(policy.config.device)}
+        },
+    )
 
 
 def make_mapped_teleop(args: argparse.Namespace) -> tuple[Optional[MappedTeleop], Optional[Any]]:
@@ -393,75 +377,6 @@ def start_dualsense_listener_if_available(
     return listener
 
 
-def _robot_type(robot: JetsonBotClient) -> str:
-    return getattr(robot, "robot_type", getattr(robot, "name", ""))
-
-
-def _run_policy_step(
-    *,
-    robot: JetsonBotClient,
-    observation: dict[str, Any],
-    obs_for_action: dict[str, Any],
-    dataset: LeRobotDataset,
-    policy: Any,
-    preprocessor: Any,
-    postprocessor: Any,
-    single_task: str,
-    robot_action_processor: Any,
-    vals_to_add_while_policy: list[str] | None,
-    teleop: Optional[MappedTeleop],
-    teleop_action_processor: Any,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return (action_values_for_dataset, robot_action_to_send)."""
-    device = str(getattr(getattr(policy, "config", None), "device", "cpu"))
-
-    inference_frame = build_inference_frame(
-        observation=observation,
-        ds_features=dataset.features,
-        device=device,
-        task=single_task,
-        robot_type=_robot_type(robot),
-    )
-
-    policy_input = preprocessor(inference_frame)
-    policy_output = policy.select_action(policy_input)
-    policy_output = postprocessor(policy_output)
-    act_processed_policy = make_robot_action(policy_output, dataset.features)
-
-    # Optional manual base correction on top of the policy output. This keeps the
-    # previous behaviour from your old lerobot_record patch, but does it locally
-    # so we no longer need to modify LeRobot's record script.
-    if teleop is not None and vals_to_add_while_policy:
-        teleop_raw = teleop.get_action()
-        teleop_processed = teleop_action_processor((teleop_raw, obs_for_action))
-        for key in vals_to_add_while_policy:
-            if key in teleop_processed and key in act_processed_policy:
-                act_processed_policy[key] += teleop_processed[key]
-
-    robot_action_to_send = robot_action_processor((act_processed_policy, obs_for_action))
-
-    # Save the action that was actually sent after robot_action_processor. This
-    # matches the current LeRobot record_loop semantics.
-    return robot_action_to_send, robot_action_to_send
-
-
-def _run_teleop_step(
-    *,
-    robot: JetsonBotClient,
-    obs: dict[str, Any],
-    teleop: MappedTeleop,
-    teleop_action_processor: Any,
-    robot_action_processor: Any,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    act = teleop.get_action()
-    if getattr(robot, "name", None) == "unitree_g1":
-        teleop.send_feedback(obs)
-
-    act_processed_teleop = teleop_action_processor((act, obs))
-    robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
-    return act_processed_teleop, robot_action_to_send
-
-
 def call_record_loop(
     *,
     robot: JetsonBotClient,
@@ -477,110 +392,36 @@ def call_record_loop(
     robot_action_processor: Any,
     robot_observation_processor: Any,
 ):
-    """
-    Local replacement for the old policy-capable lerobot_record.record_loop.
+    kwargs: dict[str, Any] = {
+        "robot": robot,
+        "events": events,
+        "fps": args.fps,
+        "control_time_s": control_time_s,
+        "single_task": args.task_description,
+        "display_data": args.display_data,
+        "teleop_action_processor": teleop_action_processor,
+        "robot_action_processor": robot_action_processor,
+        "robot_observation_processor": robot_observation_processor,
+    }
 
-    New LeRobot versions intentionally removed policy inference from
-    lerobot-record, so evaluate.py must own this loop instead of patching
-    site-packages.
-    """
-    if dataset is not None and dataset.fps != args.fps:
-        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {args.fps}).")
+    if teleop is not None:
+        kwargs["teleop"] = teleop
+
+    if dataset is not None:
+        kwargs["dataset"] = dataset
 
     if policy is not None:
-        if dataset is None:
-            raise ValueError("A dataset is required when running a policy so actions can be named and saved.")
-        if preprocessor is None or postprocessor is None:
-            raise ValueError("preprocessor and postprocessor are required when policy is provided.")
-        if hasattr(policy, "reset"):
-            policy.reset()
-        if hasattr(preprocessor, "reset"):
-            preprocessor.reset()
-        if hasattr(postprocessor, "reset"):
-            postprocessor.reset()
+        kwargs.update(
+            {
+                "policy": policy,
+                "preprocessor": preprocessor,
+                "postprocessor": postprocessor,
+                "vals_to_add_while_policy": ["motor_linear.vel", "motor_angular.vel"],
+            }
+        )
 
-    control_interval = 1 / args.fps
-    start_episode_t = time.perf_counter()
-    next_warning_count = 0
+    record_loop(**kwargs)
 
-    while (time.perf_counter() - start_episode_t) < control_time_s:
-        start_loop_t = time.perf_counter()
-
-        if events.get("stop_recording"):
-            break
-        if events.get("exit_early"):
-            events["exit_early"] = False
-            break
-        while events.get("paused") and not events.get("stop_recording"):
-            precise_sleep(0.05)
-
-        obs = robot.get_observation()
-        obs_processed = robot_observation_processor(obs)
-
-        observation_frame = None
-        if dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
-
-        action_values = None
-        robot_action_to_send = None
-
-        if policy is not None:
-            action_values, robot_action_to_send = _run_policy_step(
-                robot=robot,
-                observation=obs_processed,
-                obs_for_action=obs,
-                dataset=dataset,
-                policy=policy,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                single_task=args.task_description,
-                robot_action_processor=robot_action_processor,
-                vals_to_add_while_policy=["motor_linear.vel", "motor_angular.vel"],
-                teleop=teleop,
-                teleop_action_processor=teleop_action_processor,
-            )
-        elif teleop is not None:
-            action_values, robot_action_to_send = _run_teleop_step(
-                robot=robot,
-                obs=obs,
-                teleop=teleop,
-                teleop_action_processor=teleop_action_processor,
-                robot_action_processor=robot_action_processor,
-            )
-        else:
-            # Reset phase with --teleop none. The upstream record_loop currently
-            # continues before updating its timestamp, which can hang forever.
-            next_warning_count += 1
-            if next_warning_count == 1 or next_warning_count % 10 == 0:
-                logging.warning(
-                    "No policy or teleoperator provided; waiting through reset phase without sending actions."
-                )
-
-        if robot_action_to_send is not None:
-            robot.send_action(robot_action_to_send)
-
-        if dataset is not None and action_values is not None:
-            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
-            frame = {**observation_frame, **action_frame, "task": args.task_description}
-            dataset.add_frame(frame)
-
-        if args.display_data and action_values is not None:
-            log_visualization_data(
-                "rerun",
-                observation=obs_processed,
-                action=action_values,
-                compress_images=False,
-            )
-
-        dt_s = time.perf_counter() - start_loop_t
-        sleep_time_s = control_interval - dt_s
-        if sleep_time_s < 0:
-            logging.warning(
-                "Record loop is running slower (%.1f Hz) than the target FPS (%s Hz).",
-                1 / dt_s if dt_s > 0 else 0.0,
-                args.fps,
-            )
-        precise_sleep(max(sleep_time_s, 0.0))
 
 def run_eval_loop(
     *,
@@ -694,8 +535,7 @@ def main() -> None:
         events = make_events()
         listener = start_dualsense_listener_if_available(raw_teleop, events, args)
 
-        if args.display_data:
-            init_visualization("rerun", session_name=args.rerun_session_name)
+        init_rerun(session_name=args.rerun_session_name)
 
         if not robot.is_connected:
             raise ValueError("Robot is not connected!")
@@ -760,12 +600,6 @@ def main() -> None:
                 listener.stop()
             except Exception as exc:
                 print(f"listener.stop() failed: {exc}")
-
-        if args.display_data:
-            try:
-                shutdown_visualization("rerun")
-            except Exception as exc:
-                print(f"shutdown_visualization() failed: {exc}")
 
         try:
             dataset.finalize()

@@ -234,8 +234,8 @@ After LeRobot is installed, enable the required extras:
 ```bash
 cd lerobot
 
-python -m pip install 'lerobot[feetech]'
-python -m pip install 'lerobot[lekiwi]'
+pip install 'lerobot[feetech]'
+pip install 'lerobot[lekiwi]'
 ```
 
 ---
@@ -264,8 +264,8 @@ Install the JetsonBot robot package:
 ```bash
 cd jetson-bot/src/lerobot_robot_jetsonbot
 
-python -m pip install -e .
-python -m pip install lerobot_robot_jetsonbot
+pip install -e .
+pip install lerobot_robot_jetsonbot
 ```
 
 Install the DualSense teleoperator package:
@@ -273,8 +273,8 @@ Install the DualSense teleoperator package:
 ```bash
 cd ../lerobot_teleoperator_dualsense
 
-python -m pip install -e .
-python -m pip install lerobot_teleoperator_dualsense
+pip install -e .
+pip install lerobot_teleoperator_dualsense
 ```
 
 ---
@@ -291,15 +291,17 @@ Go to your LeRobot repository:
 cd /path/to/lerobot
 ```
 
-Check that the patche can be applied cleanly:
+Check that the patches can be applied cleanly:
 
 ```bash
+git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
 ```
 
-Apply the patche:
+Apply the patches:
 
 ```bash
+git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
 ```
 
