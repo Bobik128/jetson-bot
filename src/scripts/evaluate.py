@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import re
 from typing import Any, Optional
+import os
 
 from huggingface_hub import HfApi
 
