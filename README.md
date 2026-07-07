@@ -291,17 +291,15 @@ Go to your LeRobot repository:
 cd /path/to/lerobot
 ```
 
-Check that the patches can be applied cleanly:
+Check that the patche can be applied cleanly:
 
 ```bash
-git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply --check ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
 ```
 
-Apply the patches:
+Apply the patche:
 
 ```bash
-git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_record.patch
 git apply ../jetson-bot/'lerobot-modifiing patches'/lerobot_setup_motors.patch
 ```
 
