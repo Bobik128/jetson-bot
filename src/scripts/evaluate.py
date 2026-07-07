@@ -287,15 +287,18 @@ def load_policy(args: argparse.Namespace) -> Any:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         if args.load_on_cpu_then_cuda:
-            print("Loading SmolVLA policy on CPU...")
+            print("Loading SmolVLA policy on CPU with CUDA temporarily hidden...")
 
-            old_device = args.device
-            args.device = "cpu"
+            old_cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
             try:
                 policy = SmolVLAPolicy.from_pretrained(args.hf_model_id, device="cpu")
             finally:
-                args.device = old_device
+                if old_cuda_visible_devices is None:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                else:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = old_cuda_visible_devices
 
             try:
                 policy.config.device = "cpu"
