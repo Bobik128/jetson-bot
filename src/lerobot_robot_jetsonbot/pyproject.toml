@@ -21,6 +21,7 @@ dependencies = [
   "pyserial",
   "pygame",
   "zmq",
+  "smbus2",
 ]
 
 [tool.setuptools.packages.find]

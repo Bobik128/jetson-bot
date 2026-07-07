@@ -288,9 +288,28 @@ def load_policy(args: argparse.Namespace) -> Any:
 
         if args.load_on_cpu_then_cuda:
             print("Loading SmolVLA policy on CPU...")
-            policy = SmolVLAPolicy.from_pretrained(args.hf_model_id, device="cpu")
+
+            old_device = args.device
+            args.device = "cpu"
+
+            try:
+                policy = SmolVLAPolicy.from_pretrained(args.hf_model_id, device="cpu")
+            finally:
+                args.device = old_device
+
+            try:
+                policy.config.device = "cpu"
+            except Exception:
+                pass
+
             print("Moving SmolVLA policy to CUDA...")
             policy.to("cuda")
+
+            try:
+                policy.config.device = "cuda"
+            except Exception:
+                pass
+
             policy.eval()
             return policy
 
