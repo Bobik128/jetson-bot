@@ -234,8 +234,8 @@ After LeRobot is installed, enable the required extras:
 ```bash
 cd lerobot
 
-pip install 'lerobot[feetech]'
-pip install 'lerobot[lekiwi]'
+python -m pip install 'lerobot[feetech]'
+python -m pip install 'lerobot[lekiwi]'
 ```
 
 ---
@@ -264,8 +264,8 @@ Install the JetsonBot robot package:
 ```bash
 cd jetson-bot/src/lerobot_robot_jetsonbot
 
-pip install -e .
-pip install lerobot_robot_jetsonbot
+python -m pip install -e .
+python -m pip install lerobot_robot_jetsonbot
 ```
 
 Install the DualSense teleoperator package:
@@ -273,8 +273,8 @@ Install the DualSense teleoperator package:
 ```bash
 cd ../lerobot_teleoperator_dualsense
 
-pip install -e .
-pip install lerobot_teleoperator_dualsense
+python -m pip install -e .
+python -m pip install lerobot_teleoperator_dualsense
 ```
 
 ---
