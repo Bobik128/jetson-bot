@@ -256,13 +256,32 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def resolve_policy_device(args: argparse.Namespace) -> str:
+    """
+    Pick the policy device explicitly instead of relying on LeRobot defaults.
+    This prevents silent CPU fallback when the environment was fixed after install.
+    """
+    if args.device is not None:
+        return args.device
+
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
 def load_policy(args: argparse.Namespace) -> Any:
+    device = resolve_policy_device(args)
+    print(f"Requested/resolved policy device: {device}")
+
     if args.policy == "act":
         from lerobot.policies.act.modeling_act import ACTPolicy
 
-        if args.device is not None:
-            return ACTPolicy.from_pretrained(args.hf_model_id, device=args.device)
-        return ACTPolicy.from_pretrained(args.hf_model_id)
+        policy = ACTPolicy.from_pretrained(args.hf_model_id, device=device)
+        policy.eval()
+        return policy
 
     if args.policy == "smolvla":
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
@@ -275,11 +294,39 @@ def load_policy(args: argparse.Namespace) -> Any:
             policy.eval()
             return policy
 
-        if args.device is not None:
-            return SmolVLAPolicy.from_pretrained(args.hf_model_id, device=args.device)
-        return SmolVLAPolicy.from_pretrained(args.hf_model_id)
+        policy = SmolVLAPolicy.from_pretrained(args.hf_model_id, device=device)
+        policy.eval()
+        return policy
 
     raise ValueError(f"Unsupported policy: {args.policy}")
+
+
+def print_torch_policy_debug(policy: Any) -> None:
+    """Print enough information to catch accidental CPU-only PyTorch or CPU policy load."""
+    try:
+        import torch
+
+        print("Torch:", torch.__version__)
+        print("Torch CUDA build:", torch.version.cuda)
+        print("Torch CUDA available:", torch.cuda.is_available())
+        if torch.cuda.is_available():
+            print("Torch CUDA device:", torch.cuda.get_device_name(0))
+        print("Torch file:", torch.__file__)
+    except Exception as exc:
+        print(f"Torch debug failed: {exc}")
+
+    try:
+        print("Policy config device:", getattr(policy.config, "device", None))
+    except Exception as exc:
+        print(f"Policy config-device debug failed: {exc}")
+
+    try:
+        first_param = next(policy.parameters())
+        print("Policy parameter device:", first_param.device)
+    except StopIteration:
+        print("Policy parameter device: <policy has no parameters>")
+    except Exception as exc:
+        print(f"Policy parameter-device debug failed: {exc}")
 
 
 def make_policy_processors(policy: Any, dataset: LeRobotDataset, args: argparse.Namespace):
@@ -500,6 +547,7 @@ def main() -> None:
 
     mapped_teleop, raw_teleop = make_mapped_teleop(args)
     policy = load_policy(args)
+    print_torch_policy_debug(policy)
 
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
@@ -513,6 +561,9 @@ def main() -> None:
     print("Robot id:", args.robot_id)
     print("Policy type:", args.policy)
     print("Teleop mode:", args.teleop)
+    print("Display data:", args.display_data)
+    print("Use videos:", not args.no_videos)
+    print("FPS:", args.fps)
 
     dataset = LeRobotDataset.create(
         repo_id=eval_repo_id,
@@ -535,7 +586,8 @@ def main() -> None:
         events = make_events()
         listener = start_dualsense_listener_if_available(raw_teleop, events, args)
 
-        init_rerun(session_name=args.rerun_session_name)
+        if args.display_data:
+            init_rerun(session_name=args.rerun_session_name)
 
         if not robot.is_connected:
             raise ValueError("Robot is not connected!")
@@ -544,9 +596,9 @@ def main() -> None:
 
         print("Starting evaluate loop...")
 
-        use_inference_mode = (
-            args.policy == "smolvla" and args.teleop == "none" and not args.no_inference_mode
-        )
+        # Use inference_mode for ACT too. Without it, PyTorch keeps autograd metadata
+        # and ACT evaluation can become much slower than the old working 30 Hz setup.
+        use_inference_mode = not args.no_inference_mode
 
         if use_inference_mode:
             import torch
