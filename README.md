@@ -228,6 +228,7 @@ Install LeRobot by following the official guide:
 ```text
 https://huggingface.co/docs/lerobot/installation
 ```
+Version 0.4.4 is needed
 
 After LeRobot is installed, enable the required extras:
 
