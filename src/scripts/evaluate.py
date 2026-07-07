@@ -355,6 +355,37 @@ def make_policy_processors(policy: Any, dataset: LeRobotDataset, args: argparse.
     )
 
 
+def make_dataset_features_for_create(dataset_features: dict[str, dict], use_videos: bool) -> dict[str, dict]:
+    """
+    LeRobot v0.4.4/v3 metadata raises ValueError when features already contain
+    dtype="video" while use_videos=False. For --no-videos tests, store camera
+    frames as image files instead of videos by converting video feature dtypes
+    back to image.
+
+    This does not change robot observations or policy input. It only changes the
+    temporary eval dataset storage mode.
+    """
+    if use_videos:
+        return dataset_features
+
+    fixed: dict[str, dict] = {}
+    converted: list[str] = []
+
+    for key, feature in dataset_features.items():
+        ft = dict(feature)
+        if ft.get("dtype") == "video":
+            ft["dtype"] = "image"
+            # Video-specific metadata, if present, is invalid for image storage.
+            ft.pop("info", None)
+            converted.append(key)
+        fixed[key] = ft
+
+    if converted:
+        print("--no-videos: storing these visual features as images instead of videos:", converted)
+
+    return fixed
+
+
 def make_mapped_teleop(args: argparse.Namespace) -> tuple[Optional[MappedTeleop], Optional[Any]]:
     if args.teleop == "none":
         return None, None
@@ -554,6 +585,8 @@ def main() -> None:
     action_features = hw_to_dataset_features(robot.action_features, ACTION)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
     dataset_features = {**action_features, **obs_features}
+    use_videos = not args.no_videos
+    dataset_features = make_dataset_features_for_create(dataset_features, use_videos=use_videos)
 
     eval_repo_id = next_available_repo_id(args.hf_eval_dataset_base_id)
     print("Using eval dataset repo_id:", eval_repo_id)
@@ -562,7 +595,7 @@ def main() -> None:
     print("Policy type:", args.policy)
     print("Teleop mode:", args.teleop)
     print("Display data:", args.display_data)
-    print("Use videos:", not args.no_videos)
+    print("Use videos:", use_videos)
     print("FPS:", args.fps)
 
     dataset = LeRobotDataset.create(
@@ -570,7 +603,7 @@ def main() -> None:
         fps=args.fps,
         features=dataset_features,
         robot_type=robot.name,
-        use_videos=not args.no_videos,
+        use_videos=use_videos,
         image_writer_threads=args.image_writer_threads,
     )
 
