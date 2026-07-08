@@ -56,6 +56,10 @@ class JetsonBot(Robot):
 
         time.sleep(1)
 
+        # Import real camera implementation only when JetsonBot is actually instantiated.
+        # This keeps mere registration/import working on the laptop without PyGObject/GStreamer.
+        from .cameras.camera_jetson_gst import JetsonGstCamera  # noqa: F401
+
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property

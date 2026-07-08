@@ -6,7 +6,7 @@ index 01af95b6..8a1e0bb9 100644
      so_leader,
  )
  
-+from lerobot_robot_jetsonbot.lerobot_robot_jetsonbot import jetsonbot
++from lerobot_robot_jetsonbot import jetsonbot
 +
  COMPATIBLE_DEVICES = [
      "koch_follower",
