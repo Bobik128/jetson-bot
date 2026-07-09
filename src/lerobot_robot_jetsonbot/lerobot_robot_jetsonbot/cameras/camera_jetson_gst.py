@@ -6,7 +6,6 @@ from lerobot.cameras.camera import Camera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 from lerobot.cameras.utils import get_cv2_rotation
 
-from ..gst_cam import GstCam
 from .configuration_jetson_gst import JetsonGstCameraConfig
 
 
@@ -27,6 +26,8 @@ class JetsonGstCamera(Camera):
     def connect(self) -> None:
         if self.is_connected:
             return
+        
+        from ..gst_cam import GstCam
 
         self.camera = GstCam(
             base_dir=self.config.base_dir,
