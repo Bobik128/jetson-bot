@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-python evaluate.py \
+python ./../src/scripts/evaluate.py \
   --policy smolvla \
   --where jetson \
   --teleop none \
