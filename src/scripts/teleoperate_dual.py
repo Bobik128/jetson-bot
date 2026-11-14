@@ -33,10 +33,10 @@ def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
 
-    # context = zmq.Context.instance()
-    # sim_pub = context.socket(zmq.PUB)
-    # sim_pub.setsockopt(zmq.SNDHWM, 1)
-    # sim_pub.bind("tcp://127.0.0.1:5560")
+    context = zmq.Context.instance()
+    sim_pub = context.socket(zmq.PUB)
+    sim_pub.setsockopt(zmq.SNDHWM, 1)
+    sim_pub.bind("tcp://127.0.0.1:5560")
 
     robot_config = JetsonBotClientConfig(remote_ip="192.168.1.60", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
@@ -73,38 +73,45 @@ def main():
 
     if not robot.is_connected:
         raise ValueError("Robot is not connected!")
+        
+    print("Starting dual teleop loop...")
 
-    print("Starting teleop loop...")
     while True:
         t0 = time.perf_counter()
 
-        # Get robot observation
+        # Receive observations, including both camera feeds
         observation = robot.get_observation()
 
-    # By default outputs:
-    #   - motor_linear.vel  (m/s)
-    #   - motor_angular.vel (rad/s)
-
+        # Read leader arm + PS4 controller
         action = mapped_teleop.get_action()
 
-        # base_action = dualsense.get_action()
+        # Send commands to the physical robot
+        robot.send_action(action)
 
-        # action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+        # Keep the original camera and state visualization
+        log_rerun_data(
+            observation=observation,
+            action=action,
+        )
 
-        # sim_pub.send_json({
-        #     "timestamp_ns": time.monotonic_ns(),
-        #     "action": {k: float(v) for k, v in action.items()},
-        # })
+        # Publish commands to Isaac Lab without blocking
+        try:
+            sim_pub.send_json(
+                {
+                    "timestamp_ns": time.monotonic_ns(),
+                    "action": {
+                        k: float(v)
+                        for k, v in action.items()
+                    },
+                },
+                flags=zmq.DONTWAIT,
+            )
+        except zmq.Again:
+            pass  # Skip this simulation update
 
-
-        # Send action to robot
-        _ = robot.send_action(action)
-
-        # Visualize
-        log_rerun_data(observation=observation, action=action)
-
-        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
-
+        precise_sleep(
+            max(1.0 / FPS - (time.perf_counter() - t0), 0.0)
+        )
 
 if __name__ == "__main__":
     main()
