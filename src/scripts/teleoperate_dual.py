@@ -33,10 +33,10 @@ def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
 
-    context = zmq.Context.instance()
-    sim_pub = context.socket(zmq.PUB)
-    sim_pub.setsockopt(zmq.SNDHWM, 1)
-    sim_pub.bind("tcp://127.0.0.1:5560")
+    # context = zmq.Context.instance()
+    # sim_pub = context.socket(zmq.PUB)
+    # sim_pub.setsockopt(zmq.SNDHWM, 1)
+    # sim_pub.bind("tcp://127.0.0.1:5560")
 
     robot_config = JetsonBotClientConfig(remote_ip="192.168.1.60", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
@@ -91,10 +91,10 @@ def main():
 
         # action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-        sim_pub.send_json({
-            "timestamp_ns": time.monotonic_ns(),
-            "action": {k: float(v) for k, v in action.items()},
-        })
+        # sim_pub.send_json({
+        #     "timestamp_ns": time.monotonic_ns(),
+        #     "action": {k: float(v) for k, v in action.items()},
+        # })
 
 
         # Send action to robot
