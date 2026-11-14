@@ -199,6 +199,7 @@ class JetsonBotClient(Robot):
             raise DeviceNotConnectedError("Timeout waiting for JetsonBot Host to connect expired.")
 
         self._is_connected = True
+        print("jetsonbot client connected")
 
     def calibrate(self) -> None:
         pass

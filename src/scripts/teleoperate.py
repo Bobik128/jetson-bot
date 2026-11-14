@@ -32,32 +32,41 @@ def main():
     # Create the robot and teleoperator configurations
     # robot_config = JetsonBotClientConfig(remote_ip="100.82.250.91", id="jetson-bot")
 
-    robot_config = JetsonBotClientConfig(remote_ip="192.168.88.213", id="jetson-bot")
+    robot_config = JetsonBotClientConfig(remote_ip="192.168.1.60", id="jetson-bot")
     teleop_config = SOLeaderPlusDualsenseConfig(
         so=SO101LeaderConfig(port="/dev/ttyACM0", use_degrees=False, id="the_leader"),
         ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
-        allow_partial=True,
+        allow_partial=False,
     )
     # teleop_config = DummySOLeaderPlusDualsenseConfig(
     #     ds=DualsenseTeleopConfig(joystick_index=0, axis_forward=1, axis_turn=0, axis_turbo=2),
     # )
 
     # Initialize the robot and teleoperator
+    print("Initializing robot client")
     robot = JetsonBotClient(robot_config)
+    print("Initializing teleop")
     teleop = SOLeaderPlusDualsense(teleop_config)
     # teleop = DummySOLeaderPlusDualsense(teleop_config)
     mapped_teleop = MappedTeleop(teleop)
 
     # Connect to the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
+
+    print("Connecting robot")
     robot.connect()
+
+    print("Connecting teleop")
     mapped_teleop.connect()
 
     # Init rerun viewer
     init_rerun(session_name="jetsonbot_teleop")
 
-    if not robot.is_connected or not mapped_teleop.is_connected:
-        raise ValueError("Robot or teleop is not connected!")
+    if not mapped_teleop.is_connected:
+        raise ValueError("Teleop is not connected!")
+
+    if not robot.is_connected:
+        raise ValueError("Robot is not connected!")
 
     print("Starting teleop loop...")
     while True:
